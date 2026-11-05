@@ -100,24 +100,41 @@ func findDownloadableMedia(text string) (string, string, bool) {
 
 func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, rawURL, mediaType string) {
 	log.Printf("media download started: type=%s chat_id=%d message_id=%d", mediaType, message.Chat.ID, message.MessageID)
+	status := tgbotapi.NewMessage(message.Chat.ID, "⏳ Посилання отримано. Починаю завантаження відео...")
+	if message.Chat.Type == "group" || message.Chat.Type == "supergroup" {
+		status.ReplyToMessageID = message.MessageID
+	}
+	statusMessage, err := bot.Send(status)
+	if err != nil {
+		log.Printf("failed to send media status: type=%s chat_id=%d message_id=%d: %v", mediaType, message.Chat.ID, message.MessageID, err)
+		return
+	}
+	failStatus := func() {
+		editStatus(bot, message.Chat.ID, statusMessage.MessageID, "❌ Не вдалося завантажити або надіслати відео 😕")
+	}
+
 	switch mediaType {
 	case "twitter":
 		directURL, err := downloader.TwitterVideoURL(rawURL)
 		if err != nil {
 			log.Printf("Twitter media resolution failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
 			return
 		}
 		video := tgbotapi.NewVideo(message.Chat.ID, tgbotapi.FileURL(directURL))
 		video.ReplyToMessageID = message.MessageID
 		if _, err := bot.Send(video); err != nil {
 			log.Printf("Twitter video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
 			return
 		}
 		log.Printf("Twitter video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "instagram":
 		filePath, cleanup, err := downloader.InstagramReel(rawURL)
 		if err != nil {
 			log.Printf("Instagram download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
 			return
 		}
 		defer cleanup()
@@ -125,13 +142,16 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 		video.ReplyToMessageID = message.MessageID
 		if _, err := bot.Send(video); err != nil {
 			log.Printf("Instagram video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
 			return
 		}
 		log.Printf("Instagram video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "youtube-video":
 		filePath, cleanup, err := downloader.YouTubeVideo(rawURL)
 		if err != nil {
 			log.Printf("YouTube video download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
 			return
 		}
 		defer cleanup()
@@ -139,11 +159,14 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 		video.ReplyToMessageID = message.MessageID
 		if _, err := bot.Send(video); err != nil {
 			log.Printf("YouTube video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
 			return
 		}
 		log.Printf("YouTube video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	default:
 		log.Printf("unsupported media type: type=%q chat_id=%d message_id=%d", mediaType, message.Chat.ID, message.MessageID)
+		failStatus()
 	}
 }
 

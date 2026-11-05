@@ -24,6 +24,12 @@ func main() {
 		log.Fatal(err)
 	}
 
+	logFile, err := initLogging()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer logFile.Close()
+
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
 		log.Fatal("TELEGRAM_BOT_TOKEN is not set")
@@ -48,14 +54,17 @@ func main() {
 		if update.Message == nil {
 			continue
 		}
+		log.Printf("incoming message: update_id=%d chat_id=%d message_id=%d chat_type=%s", update.UpdateID, update.Message.Chat.ID, update.Message.MessageID, update.Message.Chat.Type)
 		if update.Message.Sticker != nil {
 			if !update.Message.Chat.IsPrivate() {
 				continue
 			}
+			log.Printf("sticker processing started: chat_id=%d message_id=%d", update.Message.Chat.ID, update.Message.MessageID)
 			handleSticker(bot, update.Message)
 			continue
 		}
 		if mediaURL, mediaType, ok := findDownloadableMedia(update.Message.Text); ok {
+			log.Printf("downloadable media detected: type=%s chat_id=%d message_id=%d", mediaType, update.Message.Chat.ID, update.Message.MessageID)
 			if update.Message.Chat.IsPrivate() {
 				handleDownloadableMedia(bot, update.Message, mediaURL, mediaType)
 			} else if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
@@ -90,42 +99,51 @@ func findDownloadableMedia(text string) (string, string, bool) {
 }
 
 func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, rawURL, mediaType string) {
+	log.Printf("media download started: type=%s chat_id=%d message_id=%d", mediaType, message.Chat.ID, message.MessageID)
 	switch mediaType {
 	case "twitter":
 		directURL, err := downloader.TwitterVideoURL(rawURL)
 		if err != nil {
-			log.Printf("Twitter download failed: %v", err)
+			log.Printf("Twitter media resolution failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			return
 		}
 		video := tgbotapi.NewVideo(message.Chat.ID, tgbotapi.FileURL(directURL))
 		video.ReplyToMessageID = message.MessageID
 		if _, err := bot.Send(video); err != nil {
-			log.Printf("failed to send Twitter video: %v", err)
+			log.Printf("Twitter video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			return
 		}
+		log.Printf("Twitter video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 	case "instagram":
 		filePath, cleanup, err := downloader.InstagramReel(rawURL)
 		if err != nil {
-			log.Printf("Instagram download failed: %v", err)
+			log.Printf("Instagram download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			return
 		}
 		defer cleanup()
 		video := tgbotapi.NewVideo(message.Chat.ID, tgbotapi.FilePath(filePath))
 		video.ReplyToMessageID = message.MessageID
 		if _, err := bot.Send(video); err != nil {
-			log.Printf("failed to send Instagram video: %v", err)
+			log.Printf("Instagram video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			return
 		}
+		log.Printf("Instagram video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 	case "youtube-video":
 		filePath, cleanup, err := downloader.YouTubeVideo(rawURL)
 		if err != nil {
-			log.Printf("YouTube video download failed: %v", err)
+			log.Printf("YouTube video download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			return
 		}
 		defer cleanup()
 		video := tgbotapi.NewVideo(message.Chat.ID, tgbotapi.FilePath(filePath))
 		video.ReplyToMessageID = message.MessageID
 		if _, err := bot.Send(video); err != nil {
-			log.Printf("failed to send YouTube video: %v", err)
+			log.Printf("YouTube video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			return
 		}
+		log.Printf("YouTube video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
+	default:
+		log.Printf("unsupported media type: type=%q chat_id=%d message_id=%d", mediaType, message.Chat.ID, message.MessageID)
 	}
 }
 
@@ -139,13 +157,16 @@ func findSourcePlatform(text string, platforms []Platform) (Platform, bool) {
 }
 
 func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message, platforms []Platform, isGroup bool) {
+	log.Printf("music link processing started: chat_id=%d message_id=%d group=%t", message.Chat.ID, message.MessageID, isGroup)
 	source, ok := findSourcePlatform(message.Text, platforms)
 	if !ok {
+		log.Printf("no supported music link found: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 		if !isGroup {
 			sendReply(bot, message, "❌ Не знайшов підтримуваного музичного посилання 😕")
 		}
 		return
 	}
+	log.Printf("music source identified: platform=%q chat_id=%d message_id=%d", source.Name(), message.Chat.ID, message.MessageID)
 
 	sourceURL, _ := source.ExtractURL(message.Text)
 	status := tgbotapi.NewMessage(message.Chat.ID, "⏳ Посилання отримано. Визначаю трек...")
@@ -154,23 +175,22 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message, platforms []
 	}
 	statusMessage, err := bot.Send(status)
 	if err != nil {
-		log.Printf("failed to send status message: %v", err)
+		log.Printf("failed to send status message: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 		return
 	}
 
+	log.Printf("track lookup started: platform=%q chat_id=%d message_id=%d", source.Name(), message.Chat.ID, message.MessageID)
 	track, err := source.TrackFromURL(sourceURL)
 	if err != nil {
-		if source.Name() == "YouTube Music" {
-			log.Printf("Error parsing YouTube link: %v", err)
-		} else {
-			log.Printf("Error parsing %s link: %v", source.Name(), err)
-		}
+		log.Printf("track lookup failed: platform=%q chat_id=%d message_id=%d: %v", source.Name(), message.Chat.ID, message.MessageID, err)
 		editStatus(bot, message.Chat.ID, statusMessage.MessageID, "❌ Не вдалося прочитати трек 😕")
 		return
 	}
+	log.Printf("track identified: platform=%q artist=%q title=%q chat_id=%d message_id=%d", source.Name(), track.Artist, track.Title, message.Chat.ID, message.MessageID)
 	cleanTitle := CleanTrackTitle(track.Title)
 	cleanArtist := sanitizeSearchArtist(CleanArtistName(track.Artist))
 	if cleanTitle == "" {
+		log.Printf("track title is empty after cleanup: platform=%q chat_id=%d message_id=%d", source.Name(), message.Chat.ID, message.MessageID)
 		editStatus(bot, message.Chat.ID, statusMessage.MessageID, "❌ Не вдалося визначити назву або автора треку 😕")
 		return
 	}
@@ -187,20 +207,22 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message, platforms []
 		}
 
 		editStatus(bot, message.Chat.ID, statusMessage.MessageID, fmt.Sprintf("⏳ Шукаю трек у %s...", target.Name()))
+		log.Printf("platform search started: target=%q artist=%q title=%q chat_id=%d message_id=%d", target.Name(), searchTrack.Artist, searchTrack.Title, message.Chat.ID, message.MessageID)
 		targetURL, searchErr := target.SearchTrack(searchTrack)
 		if searchErr == nil {
+			log.Printf("platform search succeeded: target=%q chat_id=%d message_id=%d", target.Name(), message.Chat.ID, message.MessageID)
 			links = append(links, fmt.Sprintf("<a href=\"%s\">%s</a>", html.EscapeString(targetURL), html.EscapeString(target.Name())))
 			if target.Name() == "YouTube Music" {
 				youtubeAudioURL = targetURL
 			}
 		} else {
-			log.Printf("%s search failed for %q by %q: %v", target.Name(), searchTrack.Title, searchTrack.Artist, searchErr)
+			log.Printf("platform search failed: target=%q artist=%q title=%q chat_id=%d message_id=%d: %v", target.Name(), searchTrack.Artist, searchTrack.Title, message.Chat.ID, message.MessageID, searchErr)
 		}
 	}
 
 	if len(links) == 0 {
+		log.Printf("no platform matches found: artist=%q title=%q chat_id=%d message_id=%d", track.Artist, track.Title, message.Chat.ID, message.MessageID)
 		if isGroup {
-			log.Printf("No platform match for %q by %q", track.Title, track.Artist)
 			editStatus(bot, message.Chat.ID, statusMessage.MessageID, "❌ Не вдалося знайти трек на інших платформах")
 		} else {
 			editStatus(bot, message.Chat.ID, statusMessage.MessageID, fmt.Sprintf("❌ Не вдалося знайти трек на інших платформах: %s", strings.TrimSpace(track.Title)))
@@ -216,39 +238,50 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message, platforms []
 	}
 
 	if youtubeAudioURL != "" {
+		log.Printf("YouTube audio URL selected: source=%q chat_id=%d message_id=%d", source.Name(), message.Chat.ID, message.MessageID)
 		editStatus(bot, message.Chat.ID, statusMessage.MessageID, "⏳ Завантажую аудіо...")
 		if err := sendYouTubeAudio(bot, message, youtubeAudioURL, result); err == nil {
+			log.Printf("YouTube audio workflow completed: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 			deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 			return
 		} else {
-			log.Printf("audio sending failed, falling back to text: %v", err)
+			log.Printf("YouTube audio workflow failed; sending text fallback: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 		}
+	} else {
+		log.Printf("YouTube audio skipped: no YouTube Music result available: source=%q chat_id=%d message_id=%d", source.Name(), message.Chat.ID, message.MessageID)
 	}
 
 	editStatusHTML(bot, message.Chat.ID, statusMessage.MessageID, result)
+	log.Printf("music link processing completed with text result: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 }
 
 func sendYouTubeAudio(bot *tgbotapi.BotAPI, message *tgbotapi.Message, youtubeURL string, caption string) error {
+	log.Printf("YouTube audio download started: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 	filePath, cleanup, err := downloader.YouTubeAudio(youtubeURL)
 	if err != nil {
 		return fmt.Errorf("YouTube audio download failed: %w", err)
 	}
 	defer cleanup()
+	log.Printf("YouTube audio download completed: path=%q chat_id=%d message_id=%d", filePath, message.Chat.ID, message.MessageID)
 
 	audio := tgbotapi.NewAudio(message.Chat.ID, tgbotapi.FilePath(filePath))
 	audio.ReplyToMessageID = message.MessageID
 	audio.Caption = caption
 	audio.ParseMode = tgbotapi.ModeHTML
+	log.Printf("YouTube audio upload started: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 	if _, err := bot.Send(audio); err != nil {
 		return fmt.Errorf("failed to send YouTube audio: %w", err)
 	}
+	log.Printf("YouTube audio upload completed: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 	return nil
 }
 
 func sendReply(bot *tgbotapi.BotAPI, message *tgbotapi.Message, text string) {
 	if _, err := bot.Send(tgbotapi.NewMessage(message.Chat.ID, text)); err != nil {
 		log.Printf("failed to send reply: %v", err)
+		return
 	}
+	log.Printf("reply sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 }
 
 func editStatus(bot *tgbotapi.BotAPI, chatID int64, messageID int, text string) {
@@ -270,7 +303,9 @@ func editStatusHTML(bot *tgbotapi.BotAPI, chatID int64, messageID int, text stri
 	message.DisableWebPagePreview = true
 	if _, err := bot.Send(message); err != nil {
 		log.Printf("failed to edit HTML status message: %v", err)
+		return
 	}
+	log.Printf("HTML status message edited: chat_id=%d status_message_id=%d", chatID, messageID)
 }
 
 func deleteMessage(bot *tgbotapi.BotAPI, chatID int64, messageID int) {
@@ -279,5 +314,7 @@ func deleteMessage(bot *tgbotapi.BotAPI, chatID int64, messageID int) {
 	}
 	if _, err := bot.Send(tgbotapi.NewDeleteMessage(chatID, messageID)); err != nil {
 		log.Printf("failed to delete message: %v", err)
+		return
 	}
+	log.Printf("status message deleted: chat_id=%d status_message_id=%d", chatID, messageID)
 }

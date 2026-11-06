@@ -8,11 +8,11 @@ import (
 	"regexp"
 )
 
-var instagramShortcodePattern = regexp.MustCompile(`instagram\.com/(?:reel|p)/([A-Za-z0-9_-]+)`)
+var instagramShortcodePattern = regexp.MustCompile(`(?:(?:www|m)\.)?instagram\.com/(?:reel|p)/([A-Za-z0-9_-]+)`)
 
 func InstagramReel(rawURL string) (string, func(), error) {
-	match := instagramShortcodePattern.FindStringSubmatch(rawURL)
-	if len(match) < 2 {
+	shortcode := instagramShortcode(rawURL)
+	if shortcode == "" {
 		return "", func() {}, fmt.Errorf("Instagram reel shortcode not found")
 	}
 
@@ -22,7 +22,7 @@ func InstagramReel(rawURL string) (string, func(), error) {
 	}
 	cleanup := func() { _ = os.RemoveAll(tempDir) }
 
-	command := exec.Command("python3", "-m", "instaloader", "--dirname-pattern="+tempDir, "--", "-"+match[1])
+	command := exec.Command("python3", "-m", "instaloader", "--dirname-pattern="+tempDir, "--", "-"+shortcode)
 	if output, err := command.CombinedOutput(); err != nil {
 		cleanup()
 		return "", func() {}, fmt.Errorf("run instaloader: %w: %s", err, output)
@@ -34,6 +34,14 @@ func InstagramReel(rawURL string) (string, func(), error) {
 		return "", func() {}, err
 	}
 	return videoPath, cleanup, nil
+}
+
+func instagramShortcode(rawURL string) string {
+	match := instagramShortcodePattern.FindStringSubmatch(rawURL)
+	if len(match) < 2 {
+		return ""
+	}
+	return match[1]
 }
 
 func findFileWithExtension(root, extension string) (string, error) {

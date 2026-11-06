@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	twitterURLPattern   = regexp.MustCompile(`https?://(?:www\.)?(?:x\.com|twitter\.com)/[^\s]+`)
-	instagramURLPattern = regexp.MustCompile(`https?://(?:www\.)?instagram\.com/(?:reel|p)/[^\s]+`)
+	twitterURLPattern   = regexp.MustCompile(`https?://(?:www\.)?(?:x\.com|twitter\.com|vxtwitter\.com)/[^\s]+`)
+	instagramURLPattern = regexp.MustCompile(`https?://(?:(?:www|m)\.)?instagram\.com/(?:reel|p)/[^\s]+`)
 	shortsURLPattern    = regexp.MustCompile(`https?://(?:www\.)?(?:youtube\.com/shorts|music\.youtube\.com/shorts)/[^\s?]+`)
 )
 
@@ -63,7 +63,7 @@ func main() {
 			handleSticker(bot, update.Message)
 			continue
 		}
-		if mediaURL, mediaType, ok := findDownloadableMedia(update.Message.Text); ok {
+		if mediaURL, mediaType, ok := findDownloadableMediaInMessage(update.Message); ok {
 			log.Printf("downloadable media detected: type=%s chat_id=%d message_id=%d", mediaType, update.Message.Chat.ID, update.Message.MessageID)
 			if update.Message.Chat.IsPrivate() {
 				handleDownloadableMedia(bot, update.Message, mediaURL, mediaType)
@@ -95,6 +95,31 @@ func findDownloadableMedia(text string) (string, string, bool) {
 	if match := shortsURLPattern.FindString(text); match != "" {
 		return strings.TrimRight(match, ".,!?)]}"), "youtube-video", true
 	}
+	return "", "", false
+}
+
+func findDownloadableMediaInMessage(message *tgbotapi.Message) (string, string, bool) {
+	if message == nil {
+		return "", "", false
+	}
+
+	for _, text := range []string{message.Text, message.Caption} {
+		if mediaURL, mediaType, ok := findDownloadableMedia(text); ok {
+			return mediaURL, mediaType, true
+		}
+	}
+
+	for _, entities := range [][]tgbotapi.MessageEntity{message.Entities, message.CaptionEntities} {
+		for _, entity := range entities {
+			if entity.Type != "text_link" || entity.URL == "" {
+				continue
+			}
+			if mediaURL, mediaType, ok := findDownloadableMedia(entity.URL); ok {
+				return mediaURL, mediaType, true
+			}
+		}
+	}
+
 	return "", "", false
 }
 

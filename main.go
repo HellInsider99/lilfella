@@ -17,6 +17,7 @@ var (
 	twitterURLPattern   = regexp.MustCompile(`https?://(?:www\.)?(?:x\.com|twitter\.com|vxtwitter\.com)/[^\s]+`)
 	instagramURLPattern = regexp.MustCompile(`https?://(?:(?:www|m)\.)?instagram\.com/(?:reels?|p)/[^\s]+`)
 	shortsURLPattern    = regexp.MustCompile(`https?://(?:www\.)?(?:youtube\.com/shorts|music\.youtube\.com/shorts)/[^\s?]+`)
+	tiktokURLPattern    = regexp.MustCompile(`https?://(?:(?:www|m)\.)?tiktok\.com/@[^/\s]+/video/\d+[^\s]*|https?://(?:vm|vt)\.tiktok\.com/[^\s]+`)
 )
 
 func main() {
@@ -94,6 +95,9 @@ func findDownloadableMedia(text string) (string, string, bool) {
 	}
 	if match := shortsURLPattern.FindString(text); match != "" {
 		return strings.TrimRight(match, ".,!?)]}"), "youtube-video", true
+	}
+	if match := tiktokURLPattern.FindString(text); match != "" {
+		return strings.TrimRight(match, ".,!?)]}"), "tiktok", true
 	}
 	return "", "", false
 }
@@ -188,6 +192,23 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			return
 		}
 		log.Printf("YouTube video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
+	case "tiktok":
+		filePath, cleanup, err := downloader.TikTokVideo(rawURL)
+		if err != nil {
+			log.Printf("TikTok video download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
+			return
+		}
+		defer cleanup()
+		video := tgbotapi.NewVideo(message.Chat.ID, tgbotapi.FilePath(filePath))
+		video.ReplyToMessageID = message.MessageID
+		if _, err := bot.Send(video); err != nil {
+			log.Printf("TikTok video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
+			return
+		}
+		log.Printf("TikTok video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	default:
 		log.Printf("unsupported media type: type=%q chat_id=%d message_id=%d", mediaType, message.Chat.ID, message.MessageID)

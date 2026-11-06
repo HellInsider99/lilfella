@@ -28,6 +28,27 @@ func TestInstagramShortcode(t *testing.T) {
 	}
 }
 
+func TestInstaloaderPython(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want string
+	}{
+		{name: "configured interpreter", env: `C:\bot\venv\Scripts\python.exe`, want: `C:\bot\venv\Scripts\python.exe`},
+		{name: "default interpreter", env: "", want: "python3"},
+		{name: "whitespace uses default", env: "  ", want: "python3"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("INSTALOADER_PYTHON", test.env)
+			if got := instaloaderPython(); got != test.want {
+				t.Fatalf("instaloaderPython() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestInstagramReelRejectsURLWithoutShortcode(t *testing.T) {
 	path, cleanup, err := InstagramReel("https://www.instagram.com/accounts/login/")
 	if err == nil {

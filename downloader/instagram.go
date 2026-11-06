@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 var instagramShortcodePattern = regexp.MustCompile(`(?:(?:www|m)\.)?instagram\.com/(?:reel|p)/([A-Za-z0-9_-]+)`)
@@ -22,7 +23,7 @@ func InstagramReel(rawURL string) (string, func(), error) {
 	}
 	cleanup := func() { _ = os.RemoveAll(tempDir) }
 
-	command := exec.Command("python3", "-m", "instaloader", "--dirname-pattern="+tempDir, "--", "-"+shortcode)
+	command := exec.Command(instaloaderPython(), "-m", "instaloader", "--dirname-pattern="+tempDir, "--", "-"+shortcode)
 	if output, err := command.CombinedOutput(); err != nil {
 		cleanup()
 		return "", func() {}, fmt.Errorf("run instaloader: %w: %s", err, output)
@@ -34,6 +35,13 @@ func InstagramReel(rawURL string) (string, func(), error) {
 		return "", func() {}, err
 	}
 	return videoPath, cleanup, nil
+}
+
+func instaloaderPython() string {
+	if python := strings.TrimSpace(os.Getenv("INSTALOADER_PYTHON")); python != "" {
+		return python
+	}
+	return "python3"
 }
 
 func instagramShortcode(rawURL string) string {

@@ -13,6 +13,7 @@ func TestInstagramShortcode(t *testing.T) {
 		want string
 	}{
 		{name: "reel", url: "https://www.instagram.com/reel/ABC_123-def/", want: "ABC_123-def"},
+		{name: "reels path", url: "https://www.instagram.com/reels/DesoBEUsO2_/", want: "DesoBEUsO2_"},
 		{name: "mobile reel", url: "https://m.instagram.com/reel/ABC_123-def/", want: "ABC_123-def"},
 		{name: "post", url: "https://instagram.com/p/ABC123/?img_index=1", want: "ABC123"},
 		{name: "not an Instagram post", url: "https://instagram.com/accounts/login/", want: ""},

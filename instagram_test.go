@@ -22,6 +22,13 @@ func TestFindDownloadableMediaInstagram(t *testing.T) {
 			wantFound: true,
 		},
 		{
+			name:      "reels URL",
+			text:      "https://www.instagram.com/reels/DesoBEUsO2_/",
+			wantURL:   "https://www.instagram.com/reels/DesoBEUsO2_/",
+			wantType:  "instagram",
+			wantFound: true,
+		},
+		{
 			name:      "mobile Instagram reel URL",
 			text:      "https://m.instagram.com/reel/ABC123/",
 			wantURL:   "https://m.instagram.com/reel/ABC123/",

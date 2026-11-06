@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-var instagramShortcodePattern = regexp.MustCompile(`(?:(?:www|m)\.)?instagram\.com/(?:reel|p)/([A-Za-z0-9_-]+)`)
+var instagramShortcodePattern = regexp.MustCompile(`(?:(?:www|m)\.)?instagram\.com/(?:reels?|p)/([A-Za-z0-9_-]+)`)
 
 func InstagramReel(rawURL string) (string, func(), error) {
 	shortcode := instagramShortcode(rawURL)

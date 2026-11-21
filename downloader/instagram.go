@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,12 +10,16 @@ import (
 	"strings"
 )
 
-var instagramShortcodePattern = regexp.MustCompile(`(?:(?:www|m)\.)?instagram\.com/(?:reels?|p)/([A-Za-z0-9_-]+)`)
+var instagramPostPathPattern = regexp.MustCompile(`^/(?:reels?|p)/([A-Za-z0-9_-]+)/?$`)
 
 func InstagramReel(rawURL string) (string, func(), error) {
-	shortcode := instagramShortcode(rawURL)
-	if shortcode == "" {
+	if instagramShortcode(rawURL) == "" {
 		return "", func() {}, fmt.Errorf("Instagram reel shortcode not found")
+	}
+
+	cookiesArgs, err := ytDlpCookiesArgs()
+	if err != nil {
+		return "", func() {}, fmt.Errorf("configure yt-dlp cookies: %w", err)
 	}
 
 	tempDir, err := os.MkdirTemp("", "spotideezer-instagram-")
@@ -22,11 +27,16 @@ func InstagramReel(rawURL string) (string, func(), error) {
 		return "", func() {}, fmt.Errorf("create Instagram temp directory: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(tempDir) }
+	outputPattern := filepath.Join(tempDir, "%(id)s.%(ext)s")
 
-	command := exec.Command(instaloaderPython(), "-m", "instaloader", "--dirname-pattern="+tempDir, "--", "-"+shortcode)
+	args := append([]string{"-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]", "-o", outputPattern}, ffmpegLocationArgs()...)
+	args = append(args, "--merge-output-format", "mp4")
+	args = append(args, cookiesArgs...)
+	args = append(args, rawURL)
+	command := exec.Command("yt-dlp", args...)
 	if output, err := command.CombinedOutput(); err != nil {
 		cleanup()
-		return "", func() {}, fmt.Errorf("run instaloader: %w: %s", err, output)
+		return "", func() {}, fmt.Errorf("run yt-dlp for Instagram video: %w: %s", err, output)
 	}
 
 	videoPath, err := findFileWithExtension(tempDir, ".mp4")
@@ -45,15 +55,19 @@ func InstagramReel(rawURL string) (string, func(), error) {
 	}, nil
 }
 
-func instaloaderPython() string {
-	if python := strings.TrimSpace(os.Getenv("INSTALOADER_PYTHON")); python != "" {
-		return python
-	}
-	return "python3"
-}
-
 func instagramShortcode(rawURL string) string {
-	match := instagramShortcodePattern.FindStringSubmatch(rawURL)
+	parsed, err := url.Parse(rawURL)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.User != nil || parsed.Port() != "" {
+		return ""
+	}
+
+	switch strings.ToLower(parsed.Hostname()) {
+	case "instagram.com", "www.instagram.com", "m.instagram.com":
+	default:
+		return ""
+	}
+
+	match := instagramPostPathPattern.FindStringSubmatch(parsed.Path)
 	if len(match) < 2 {
 		return ""
 	}

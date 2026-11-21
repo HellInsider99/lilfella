@@ -16,6 +16,8 @@ func TestInstagramShortcode(t *testing.T) {
 		{name: "reels path", url: "https://www.instagram.com/reels/DesoBEUsO2_/", want: "DesoBEUsO2_"},
 		{name: "mobile reel", url: "https://m.instagram.com/reel/ABC_123-def/", want: "ABC_123-def"},
 		{name: "post", url: "https://instagram.com/p/ABC123/?img_index=1", want: "ABC123"},
+		{name: "untrusted host", url: "https://instagram.com.example.org/reel/ABC123/", want: ""},
+		{name: "unsupported scheme", url: "ftp://instagram.com/reel/ABC123/", want: ""},
 		{name: "not an Instagram post", url: "https://instagram.com/accounts/login/", want: ""},
 		{name: "empty", url: "", want: ""},
 	}
@@ -24,27 +26,6 @@ func TestInstagramShortcode(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := instagramShortcode(test.url); got != test.want {
 				t.Fatalf("instagramShortcode(%q) = %q, want %q", test.url, got, test.want)
-			}
-		})
-	}
-}
-
-func TestInstaloaderPython(t *testing.T) {
-	tests := []struct {
-		name string
-		env  string
-		want string
-	}{
-		{name: "configured interpreter", env: `C:\bot\venv\Scripts\python.exe`, want: `C:\bot\venv\Scripts\python.exe`},
-		{name: "default interpreter", env: "", want: "python3"},
-		{name: "whitespace uses default", env: "  ", want: "python3"},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("INSTALOADER_PYTHON", test.env)
-			if got := instaloaderPython(); got != test.want {
-				t.Fatalf("instaloaderPython() = %q, want %q", got, test.want)
 			}
 		})
 	}

@@ -338,7 +338,7 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message, platforms []
 	if youtubeAudioURL != "" {
 		log.Printf("YouTube audio URL selected: source=%q chat_id=%d message_id=%d", source.Name(), message.Chat.ID, message.MessageID)
 		editStatus(bot, message.Chat.ID, statusMessage.MessageID, "⏳ Завантажую аудіо...")
-		if err := sendYouTubeAudio(bot, message, youtubeAudioURL, result); err == nil {
+		if err := sendYouTubeAudio(bot, message, youtubeAudioURL, track.Artist, track.Title, result); err == nil {
 			log.Printf("YouTube audio workflow completed: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 			deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 			return
@@ -353,7 +353,7 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message, platforms []
 	log.Printf("music link processing completed with text result: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 }
 
-func sendYouTubeAudio(bot *tgbotapi.BotAPI, message *tgbotapi.Message, youtubeURL string, caption string) error {
+func sendYouTubeAudio(bot *tgbotapi.BotAPI, message *tgbotapi.Message, youtubeURL, artist, title, caption string) error {
 	log.Printf("YouTube audio download started: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 	filePath, cleanup, err := downloader.YouTubeAudio(youtubeURL)
 	if err != nil {
@@ -366,6 +366,19 @@ func sendYouTubeAudio(bot *tgbotapi.BotAPI, message *tgbotapi.Message, youtubeUR
 	audio.ReplyToMessageID = message.MessageID
 	audio.Caption = caption
 	audio.ParseMode = tgbotapi.ModeHTML
+	audio.Title = strings.TrimSpace(title)
+	audio.Performer = strings.TrimSpace(artist)
+
+	videoID, err := extractYouTubeVideoID(youtubeURL)
+	if err != nil {
+		log.Printf("YouTube audio thumbnail skipped: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+	} else if thumbnailPath, cleanupThumbnail, thumbnailErr := downloader.YouTubeAudioThumbnail(videoID); thumbnailErr != nil {
+		log.Printf("YouTube audio thumbnail unavailable; sending without it: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, thumbnailErr)
+	} else {
+		defer cleanupThumbnail()
+		audio.Thumb = tgbotapi.FilePath(thumbnailPath)
+	}
+
 	log.Printf("YouTube audio upload started: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 	if _, err := bot.Send(audio); err != nil {
 		return fmt.Errorf("failed to send YouTube audio: %w", err)

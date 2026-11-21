@@ -1,13 +1,19 @@
 package downloader
 
 import (
+	"bytes"
 	"fmt"
+	"image/jpeg"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
 )
+
+const telegramAudioThumbnailMaxSize = 200_000
 
 func YouTubeAudio(rawURL string) (string, func(), error) {
 	startedAt := time.Now()
@@ -53,4 +59,49 @@ func YouTubeAudio(rawURL string) (string, func(), error) {
 	}
 	log.Printf("downloader: YouTube audio download succeeded after %s: size_bytes=%d", time.Since(startedAt).Round(time.Millisecond), info.Size())
 	return audioPath, cleanup, nil
+}
+
+func YouTubeAudioThumbnail(videoID string) (string, func(), error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	thumbnailURL := "https://img.youtube.com/vi/" + videoID + "/mqdefault.jpg"
+	response, err := client.Get(thumbnailURL)
+	if err != nil {
+		return "", func() {}, fmt.Errorf("request YouTube audio thumbnail: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", func() {}, fmt.Errorf("YouTube audio thumbnail returned %s", response.Status)
+	}
+
+	imageData, err := io.ReadAll(io.LimitReader(response.Body, telegramAudioThumbnailMaxSize+1))
+	if err != nil {
+		return "", func() {}, fmt.Errorf("read YouTube audio thumbnail: %w", err)
+	}
+	if len(imageData) > telegramAudioThumbnailMaxSize {
+		return "", func() {}, fmt.Errorf("YouTube audio thumbnail exceeds Telegram's 200 KB limit")
+	}
+	config, err := jpeg.DecodeConfig(bytes.NewReader(imageData))
+	if err != nil {
+		return "", func() {}, fmt.Errorf("decode YouTube audio thumbnail: %w", err)
+	}
+	if config.Width > 320 || config.Height > 320 {
+		return "", func() {}, fmt.Errorf("YouTube audio thumbnail dimensions exceed Telegram's 320x320 limit")
+	}
+
+	thumbnailFile, err := os.CreateTemp("", "telegram-audio-thumbnail-*.jpg")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("create YouTube audio thumbnail file: %w", err)
+	}
+	thumbnailPath := thumbnailFile.Name()
+	cleanup := func() { _ = os.Remove(thumbnailPath) }
+	if _, err := thumbnailFile.Write(imageData); err != nil {
+		_ = thumbnailFile.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("write YouTube audio thumbnail: %w", err)
+	}
+	if err := thumbnailFile.Close(); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("close YouTube audio thumbnail: %w", err)
+	}
+	return thumbnailPath, cleanup, nil
 }

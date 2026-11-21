@@ -119,6 +119,45 @@ func fitVideoToTelegramLimit(path string) (string, func(), error) {
 	return "", func() {}, fmt.Errorf("compressed video still exceeds the safe Telegram upload target after %d attempts", telegramVideoEncodeAttempts)
 }
 
+func VideoThumbnail(path string) (string, func(), error) {
+	ffmpegPath, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("find ffmpeg for video thumbnail: %w", err)
+	}
+
+	tempDir, err := os.MkdirTemp("", "telegram-video-thumb-")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("create video thumbnail temp directory: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(tempDir) }
+	thumbnailPath := filepath.Join(tempDir, "thumbnail.jpg")
+
+	for _, quality := range []string{"5", "10", "15"} {
+		command := exec.Command(ffmpegPath,
+			"-hide_banner", "-loglevel", "error", "-y",
+			"-ss", "0.2", "-i", path,
+			"-frames:v", "1",
+			"-vf", "scale=320:320:force_original_aspect_ratio=decrease",
+			"-q:v", quality, "-update", "1", thumbnailPath)
+		if output, err := command.CombinedOutput(); err != nil {
+			cleanup()
+			return "", func() {}, fmt.Errorf("generate video thumbnail: %w: %s", err, strings.TrimSpace(string(output)))
+		}
+
+		info, err := os.Stat(thumbnailPath)
+		if err != nil {
+			cleanup()
+			return "", func() {}, fmt.Errorf("stat generated video thumbnail: %w", err)
+		}
+		if info.Size() <= 200_000 {
+			return thumbnailPath, cleanup, nil
+		}
+	}
+
+	cleanup()
+	return "", func() {}, fmt.Errorf("generated video thumbnail exceeds Telegram's 200 KB limit")
+}
+
 func telegramVideoBitrate(duration float64) (int, error) {
 	totalBitrate := float64(telegramVideoTargetSize) * 8 / duration
 	videoBitrate := int((totalBitrate - telegramVideoAudioBitrate) * 0.97)

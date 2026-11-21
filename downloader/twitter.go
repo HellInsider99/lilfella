@@ -5,83 +5,142 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 )
 
 type twitterResponse struct {
-	MediaURL  string          `json:"media_url"`
-	MediaURLs json.RawMessage `json:"mediaURLs"`
+	MediaURL      string             `json:"media_url"`
+	MediaURLs     json.RawMessage    `json:"mediaURLs"`
+	MediaExtended []TwitterMediaItem `json:"media_extended"`
 }
 
-type twitterMedia struct {
+type TwitterMediaItem struct {
 	URL  string `json:"url"`
 	Type string `json:"type"`
 }
 
-func parseTwitterMediaURLs(raw json.RawMessage) []string {
+func parseTwitterMediaURLs(raw json.RawMessage) []TwitterMediaItem {
 	if len(raw) == 0 {
 		return nil
 	}
 
 	// Try array of objects: [{"url":"...", "type":"..."}]
-	var mediaObjects []twitterMedia
+	var mediaObjects []TwitterMediaItem
 	if err := json.Unmarshal(raw, &mediaObjects); err == nil {
-		urls := make([]string, 0, len(mediaObjects))
-		for _, m := range mediaObjects {
-			if m.URL != "" {
-				urls = append(urls, m.URL)
+		media := make([]TwitterMediaItem, 0, len(mediaObjects))
+		for _, item := range mediaObjects {
+			if item.URL != "" {
+				if item.Type == "" {
+					item.Type = inferTwitterMediaType(item.URL)
+				}
+				media = append(media, item)
 			}
 		}
-		return urls
+		return media
 	}
 
 	// Try array of strings: ["https://..."]
 	var mediaStrings []string
 	if err := json.Unmarshal(raw, &mediaStrings); err == nil {
-		return mediaStrings
+		media := make([]TwitterMediaItem, 0, len(mediaStrings))
+		for _, mediaURL := range mediaStrings {
+			if mediaURL != "" {
+				media = append(media, TwitterMediaItem{URL: mediaURL, Type: inferTwitterMediaType(mediaURL)})
+			}
+		}
+		return media
 	}
 
 	// Try single string: "https://..."
 	var single string
 	if err := json.Unmarshal(raw, &single); err == nil && single != "" {
-		return []string{single}
+		return []TwitterMediaItem{{URL: single, Type: inferTwitterMediaType(single)}}
 	}
 
 	return nil
 }
 
-func TwitterVideoURL(rawURL string) (string, error) {
+func TwitterMedia(rawURL string) ([]TwitterMediaItem, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return "", fmt.Errorf("parse Twitter URL: %w", err)
+		return nil, fmt.Errorf("parse Twitter URL: %w", err)
 	}
 	parsed.Scheme = "https"
 	parsed.Host = "api.vxtwitter.com"
 
 	response, err := http.Get(parsed.String())
 	if err != nil {
-		return "", fmt.Errorf("request Twitter proxy: %w", err)
+		return nil, fmt.Errorf("request Twitter proxy: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Twitter proxy returned %s", response.Status)
+		return nil, fmt.Errorf("Twitter proxy returned %s", response.Status)
 	}
 
 	var payload twitterResponse
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		return "", fmt.Errorf("decode Twitter proxy response: %w", err)
+		return nil, fmt.Errorf("decode Twitter proxy response: %w", err)
 	}
-	if payload.MediaURL != "" {
-		return payload.MediaURL, nil
+	media := parseTwitterMedia(payload)
+	if len(media) == 0 {
+		return nil, fmt.Errorf("Twitter media URL not found")
 	}
-	for _, mediaURL := range parseTwitterMediaURLs(payload.MediaURLs) {
-		if strings.HasSuffix(strings.ToLower(mediaURL), ".mp4") || strings.Contains(mediaURL, "video") {
-			return mediaURL, nil
+	return media, nil
+}
+
+func parseTwitterMedia(payload twitterResponse) []TwitterMediaItem {
+	if len(payload.MediaExtended) > 0 {
+		media := make([]TwitterMediaItem, 0, len(payload.MediaExtended))
+		for _, item := range payload.MediaExtended {
+			if item.URL != "" {
+				if item.Type == "" {
+					item.Type = inferTwitterMediaType(item.URL)
+				}
+				media = append(media, item)
+			}
+		}
+		if len(media) > 0 {
+			return media
 		}
 	}
-	// If we have any media URL at all, return the first one
-	if urls := parseTwitterMediaURLs(payload.MediaURLs); len(urls) > 0 {
-		return urls[0], nil
+
+	media := parseTwitterMediaURLs(payload.MediaURLs)
+	if len(media) == 0 && payload.MediaURL != "" {
+		media = []TwitterMediaItem{{URL: payload.MediaURL, Type: inferTwitterMediaType(payload.MediaURL)}}
+	}
+	return media
+}
+
+func TwitterVideoURL(rawURL string) (string, error) {
+	media, err := TwitterMedia(rawURL)
+	if err != nil {
+		return "", err
+	}
+	for _, item := range media {
+		if item.Type == "video" || item.Type == "animated_gif" {
+			return item.URL, nil
+		}
+	}
+	for _, item := range media {
+		if item.Type != "image" {
+			return item.URL, nil
+		}
 	}
 	return "", fmt.Errorf("Twitter video URL not found")
+}
+
+func inferTwitterMediaType(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	if strings.EqualFold(filepath.Ext(parsed.Path), ".mp4") || strings.EqualFold(parsed.Hostname(), "video.twimg.com") {
+		return "video"
+	}
+	if strings.EqualFold(parsed.Hostname(), "pbs.twimg.com") || strings.EqualFold(filepath.Ext(parsed.Path), ".jpg") ||
+		strings.EqualFold(filepath.Ext(parsed.Path), ".jpeg") || strings.EqualFold(filepath.Ext(parsed.Path), ".png") {
+		return "image"
+	}
+	return ""
 }

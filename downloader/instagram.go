@@ -68,7 +68,7 @@ func findFileWithExtension(root, extension string) (string, error) {
 		return "", fmt.Errorf("scan downloaded media: %w", err)
 	}
 	if found == "" {
-		return "", fmt.Errorf("Instagram video file not found")
+		return "", fmt.Errorf("downloaded video file not found")
 	}
 	return found, nil
 }

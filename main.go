@@ -17,7 +17,7 @@ var (
 	twitterURLPattern   = regexp.MustCompile(`https?://(?:www\.)?(?:x\.com|twitter\.com|vxtwitter\.com)/[^\s]+`)
 	instagramURLPattern = regexp.MustCompile(`https?://(?:(?:www|m)\.)?instagram\.com/(?:reels?|p)/[^\s]+`)
 	shortsURLPattern    = regexp.MustCompile(`https?://(?:www\.)?(?:youtube\.com/shorts|music\.youtube\.com/shorts)/[^\s?]+`)
-	tiktokURLPattern    = regexp.MustCompile(`https?://(?:(?:www|m)\.)?tiktok\.com/@[^/\s]+/video/\d+[^\s]*|https?://(?:vm|vt)\.tiktok\.com/[^\s]+`)
+	tiktokURLPattern    = regexp.MustCompile(`https?://(?:(?:www|m)\.)?tiktok\.com/(?:@[^/\s]+/video/\d+|t/[^/\s]+)[^\s]*|https?://(?:vm|vt)\.tiktok\.com/[^\s]+`)
 )
 
 func main() {

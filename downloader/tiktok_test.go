@@ -10,9 +10,11 @@ func TestValidateTikTokURL(t *testing.T) {
 	}{
 		{name: "standard video", url: "https://www.tiktok.com/@user/video/1234567890"},
 		{name: "mobile video with query", url: "https://m.tiktok.com/@user/video/1234567890?lang=en"},
+		{name: "short share path", url: "https://www.tiktok.com/t/ZM123456/"},
 		{name: "short link", url: "https://vm.tiktok.com/ZM123456/"},
 		{name: "alternate short link", url: "https://vt.tiktok.com/ZM123456/"},
 		{name: "non-video path", url: "https://www.tiktok.com/@user", wantErr: true},
+		{name: "empty short share path", url: "https://www.tiktok.com/t/", wantErr: true},
 		{name: "untrusted host", url: "https://tiktok.com.example.org/@user/video/123", wantErr: true},
 		{name: "unsupported scheme", url: "ftp://www.tiktok.com/@user/video/123", wantErr: true},
 		{name: "empty short link", url: "https://vm.tiktok.com/", wantErr: true},

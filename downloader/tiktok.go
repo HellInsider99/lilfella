@@ -10,11 +10,19 @@ import (
 	"strings"
 )
 
-var tikTokVideoPathPattern = regexp.MustCompile(`^/@[^/]+/video/[0-9]+/?$`)
+var (
+	tikTokVideoPathPattern = regexp.MustCompile(`^/@[^/]+/video/[0-9]+/?$`)
+	tikTokShortPathPattern = regexp.MustCompile(`^/t/[^/]+/?$`)
+)
 
 func TikTokVideo(rawURL string) (string, func(), error) {
 	if err := validateTikTokURL(rawURL); err != nil {
 		return "", func() {}, err
+	}
+
+	cookiesArgs, err := ytDlpCookiesArgs()
+	if err != nil {
+		return "", func() {}, fmt.Errorf("configure yt-dlp cookies: %w", err)
 	}
 
 	tempDir, err := os.MkdirTemp("", "spotideezer-tiktok-")
@@ -24,7 +32,10 @@ func TikTokVideo(rawURL string) (string, func(), error) {
 	cleanup := func() { _ = os.RemoveAll(tempDir) }
 	outputPattern := filepath.Join(tempDir, "%(id)s.%(ext)s")
 
-	command := exec.Command("yt-dlp", "-f", "best[ext=mp4]/best", "-o", outputPattern, rawURL)
+	args := append([]string{"-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]", "-o", outputPattern}, ffmpegLocationArgs()...)
+	args = append(args, cookiesArgs...)
+	args = append(args, rawURL)
+	command := exec.Command("yt-dlp", args...)
 	if output, err := command.CombinedOutput(); err != nil {
 		cleanup()
 		return "", func() {}, fmt.Errorf("run yt-dlp for TikTok video: %w: %s", err, output)
@@ -32,6 +43,10 @@ func TikTokVideo(rawURL string) (string, func(), error) {
 
 	videoPath, err := findFileWithExtension(tempDir, ".mp4")
 	if err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	if err := checkFileSize(videoPath); err != nil {
 		cleanup()
 		return "", func() {}, err
 	}
@@ -53,7 +68,7 @@ func validateTikTokURL(rawURL string) error {
 	host := strings.ToLower(parsed.Hostname())
 	switch host {
 	case "tiktok.com", "www.tiktok.com", "m.tiktok.com":
-		if !tikTokVideoPathPattern.MatchString(parsed.Path) {
+		if !tikTokVideoPathPattern.MatchString(parsed.Path) && !tikTokShortPathPattern.MatchString(parsed.Path) {
 			return fmt.Errorf("TikTok video URL path not found")
 		}
 	case "vm.tiktok.com", "vt.tiktok.com":

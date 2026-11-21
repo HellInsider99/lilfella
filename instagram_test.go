@@ -50,6 +50,13 @@ func TestFindDownloadableMediaInstagram(t *testing.T) {
 			wantFound: true,
 		},
 		{
+			name:      "TikTok share path",
+			text:      "https://www.tiktok.com/t/ZM123456/",
+			wantURL:   "https://www.tiktok.com/t/ZM123456/",
+			wantType:  "tiktok",
+			wantFound: true,
+		},
+		{
 			name:      "post URL with trailing punctuation",
 			text:      "https://www.instagram.com/p/ABC123/.",
 			wantURL:   "https://www.instagram.com/p/ABC123/",

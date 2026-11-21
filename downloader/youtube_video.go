@@ -40,17 +40,22 @@ func YouTubeVideo(rawURL string) (string, func(), error) {
 		log.Printf("downloader: YouTube video file lookup failed after %s: %v", time.Since(startedAt).Round(time.Millisecond), err)
 		return "", func() {}, err
 	}
-	if err := checkFileSize(videoPath); err != nil {
+	videoPath, compressionCleanup, err := fitVideoToTelegramLimit(videoPath)
+	if err != nil {
 		cleanup()
 		log.Printf("downloader: YouTube video file validation failed after %s: %v", time.Since(startedAt).Round(time.Millisecond), err)
 		return "", func() {}, err
 	}
 	info, err := os.Stat(videoPath)
 	if err != nil {
+		compressionCleanup()
 		cleanup()
 		log.Printf("downloader: stat YouTube video file failed: %v", err)
 		return "", func() {}, fmt.Errorf("stat downloaded video file: %w", err)
 	}
 	log.Printf("downloader: YouTube video download succeeded after %s: size_bytes=%d", time.Since(startedAt).Round(time.Millisecond), info.Size())
-	return videoPath, cleanup, nil
+	return videoPath, func() {
+		compressionCleanup()
+		cleanup()
+	}, nil
 }

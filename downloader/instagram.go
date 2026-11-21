@@ -34,7 +34,15 @@ func InstagramReel(rawURL string) (string, func(), error) {
 		cleanup()
 		return "", func() {}, err
 	}
-	return videoPath, cleanup, nil
+	videoPath, compressionCleanup, err := fitVideoToTelegramLimit(videoPath)
+	if err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return videoPath, func() {
+		compressionCleanup()
+		cleanup()
+	}, nil
 }
 
 func instaloaderPython() string {

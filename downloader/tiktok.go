@@ -46,11 +46,15 @@ func TikTokVideo(rawURL string) (string, func(), error) {
 		cleanup()
 		return "", func() {}, err
 	}
-	if err := checkFileSize(videoPath); err != nil {
+	videoPath, compressionCleanup, err := fitVideoToTelegramLimit(videoPath)
+	if err != nil {
 		cleanup()
 		return "", func() {}, err
 	}
-	return videoPath, cleanup, nil
+	return videoPath, func() {
+		compressionCleanup()
+		cleanup()
+	}, nil
 }
 
 func validateTikTokURL(rawURL string) error {

@@ -134,6 +134,7 @@ func findDownloadableMediaInMessage(message *tgbotapi.Message) (string, string, 
 func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, rawURL, mediaType string) {
 	log.Printf("media download started: type=%s chat_id=%d message_id=%d", mediaType, message.Chat.ID, message.MessageID)
 	status := tgbotapi.NewMessage(message.Chat.ID, "⏳ Посилання отримано. Починаю завантаження медіа...")
+	status.DisableNotification = true
 	if message.Chat.Type == "group" || message.Chat.Type == "supergroup" {
 		status.ReplyToMessageID = message.MessageID
 	}
@@ -159,6 +160,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			case "image":
 				photo := tgbotapi.NewPhoto(message.Chat.ID, tgbotapi.FileURL(item.URL))
 				photo.ReplyToMessageID = message.MessageID
+				photo.DisableNotification = true
 				if _, err := bot.Send(photo); err != nil {
 					log.Printf("Twitter photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 					failStatus()
@@ -167,6 +169,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			case "video", "animated_gif":
 				video := tgbotapi.NewVideo(message.Chat.ID, tgbotapi.FileURL(item.URL))
 				video.ReplyToMessageID = message.MessageID
+				video.DisableNotification = true
 				video.SupportsStreaming = true
 				if _, err := bot.Send(video); err != nil {
 					log.Printf("Twitter video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
@@ -207,6 +210,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			if item.Type == "image" {
 				photo := tgbotapi.NewPhoto(message.Chat.ID, tgbotapi.FileURL(item.URL))
 				photo.ReplyToMessageID = message.MessageID
+				photo.DisableNotification = true
 				if _, err := bot.Send(photo); err != nil {
 					log.Printf("Reddit photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 					failStatus()
@@ -270,6 +274,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 func sendLocalVideo(bot *tgbotapi.BotAPI, message *tgbotapi.Message, filePath string) error {
 	video := tgbotapi.NewVideo(message.Chat.ID, tgbotapi.FilePath(filePath))
 	video.ReplyToMessageID = message.MessageID
+	video.DisableNotification = true
 	video.SupportsStreaming = true
 
 	thumbnailPath, cleanupThumbnail, err := downloader.VideoThumbnail(filePath)
@@ -307,6 +312,7 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message, platforms []
 
 	sourceURL, _ := source.ExtractURL(message.Text)
 	status := tgbotapi.NewMessage(message.Chat.ID, "⏳ Посилання отримано. Визначаю трек...")
+	status.DisableNotification = true
 	if isGroup {
 		status.ReplyToMessageID = message.MessageID
 	}
@@ -403,6 +409,7 @@ func sendYouTubeAudio(bot *tgbotapi.BotAPI, message *tgbotapi.Message, youtubeUR
 
 	audio := tgbotapi.NewAudio(message.Chat.ID, tgbotapi.FilePath(filePath))
 	audio.ReplyToMessageID = message.MessageID
+	audio.DisableNotification = true
 	audio.Caption = caption
 	audio.ParseMode = tgbotapi.ModeHTML
 	audio.Title = strings.TrimSpace(title)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -14,6 +15,8 @@ type RedditMediaItem struct {
 	URL  string
 	Type string
 }
+
+var redditUnsupportedURLPattern = regexp.MustCompile(`(?i)Unsupported URL\s*:\s*(\S+)`)
 
 func validateRedditURL(rawURL string) error {
 	parsed, err := url.Parse(rawURL)
@@ -47,19 +50,56 @@ func RedditMedia(rawURL string) ([]RedditMediaItem, error) {
 	if err := validateRedditURL(rawURL); err != nil {
 		return nil, err
 	}
-	cookiesArgs, err := ytDlpCookiesArgs()
+	cookiesArgs, cleanupCookies, err := ytDlpCookiesArgs()
 	if err != nil {
 		return nil, fmt.Errorf("configure yt-dlp cookies: %w", err)
 	}
+	defer cleanupCookies()
 
 	args := append([]string{"--dump-single-json", "--no-warnings", "--skip-download"}, cookiesArgs...)
 	args = append(args, rawURL)
 	output, err := exec.Command("yt-dlp", args...).CombinedOutput()
 	if err != nil {
+		if media, ok := redditImageFromUnsupportedURL(output); ok {
+			return []RedditMediaItem{media}, nil
+		}
 		return nil, fmt.Errorf("inspect Reddit media with yt-dlp: %w: %s", err, output)
 	}
 
 	return parseRedditYTDlpMedia(output)
+}
+
+func redditImageFromUnsupportedURL(output []byte) (RedditMediaItem, bool) {
+	match := redditUnsupportedURLPattern.FindSubmatch(output)
+	if len(match) < 2 {
+		return RedditMediaItem{}, false
+	}
+	wrapperURL, err := url.Parse(string(match[1]))
+	if err != nil || (wrapperURL.Scheme != "https" && wrapperURL.Scheme != "http") ||
+		wrapperURL.User != nil || wrapperURL.Port() != "" ||
+		!strings.EqualFold(wrapperURL.Hostname(), "www.reddit.com") || wrapperURL.Path != "/media" {
+		return RedditMediaItem{}, false
+	}
+
+	mediaURL := wrapperURL.Query().Get("url")
+	parsedMediaURL, err := url.Parse(mediaURL)
+	if err != nil || (parsedMediaURL.Scheme != "https" && parsedMediaURL.Scheme != "http") ||
+		parsedMediaURL.User != nil || parsedMediaURL.Port() != "" {
+		return RedditMediaItem{}, false
+	}
+	switch strings.ToLower(parsedMediaURL.Hostname()) {
+	case "preview.redd.it", "i.redd.it":
+	default:
+		return RedditMediaItem{}, false
+	}
+
+	ext := strings.ToLower(filepath.Ext(parsedMediaURL.Path))
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp":
+		return RedditMediaItem{URL: mediaURL, Type: "image"}, true
+	default:
+		return RedditMediaItem{}, false
+	}
 }
 
 type redditYTDlpEntry struct {
@@ -136,10 +176,11 @@ func RedditVideo(rawURL string) (string, func(), error) {
 		return "", func() {}, err
 	}
 
-	cookiesArgs, err := ytDlpCookiesArgs()
+	cookiesArgs, cleanupCookies, err := ytDlpCookiesArgs()
 	if err != nil {
 		return "", func() {}, fmt.Errorf("configure yt-dlp cookies: %w", err)
 	}
+	defer cleanupCookies()
 	tempDir, err := os.MkdirTemp("", "spotideezer-reddit-")
 	if err != nil {
 		return "", func() {}, fmt.Errorf("create Reddit temp directory: %w", err)

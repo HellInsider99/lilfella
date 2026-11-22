@@ -53,3 +53,21 @@ func TestParseRedditMediaVideo(t *testing.T) {
 		t.Fatalf("parseRedditMedia() = %#v, want video item", items)
 	}
 }
+
+func TestRedditImageFromUnsupportedMediaURL(t *testing.T) {
+	output := []byte("ERROR: Unsupported URL : https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fimage.jpeg%3Fwidth%3D1080\n")
+	item, ok := redditImageFromUnsupportedURL(output)
+	if !ok {
+		t.Fatal("redditImageFromUnsupportedURL() found no image")
+	}
+	if item.Type != "image" || item.URL != "https://preview.redd.it/image.jpeg?width=1080" {
+		t.Errorf("redditImageFromUnsupportedURL() = %#v", item)
+	}
+}
+
+func TestRedditImageFromUnsupportedURLRejectsUntrustedHosts(t *testing.T) {
+	output := []byte("ERROR: Unsupported URL: https://www.reddit.com/media?url=https%3A%2F%2Fevil.example%2Fimage.jpeg\n")
+	if _, ok := redditImageFromUnsupportedURL(output); ok {
+		t.Fatal("redditImageFromUnsupportedURL() accepted untrusted media host")
+	}
+}

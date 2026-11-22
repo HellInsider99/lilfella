@@ -12,10 +12,11 @@ import (
 func YouTubeVideo(rawURL string) (string, func(), error) {
 	startedAt := time.Now()
 	log.Printf("downloader: YouTube video download started")
-	cookiesArgs, err := ytDlpCookiesArgs()
+	cookiesArgs, cleanupCookies, err := ytDlpCookiesArgs()
 	if err != nil {
 		return "", func() {}, fmt.Errorf("configure yt-dlp cookies: %w", err)
 	}
+	defer cleanupCookies()
 	tempDir, err := os.MkdirTemp("", "spotideezer-youtube-video-")
 	if err != nil {
 		log.Printf("downloader: create YouTube video temp directory failed: %v", err)

@@ -11,7 +11,8 @@ func TestYtDlpCookiesArgs(t *testing.T) {
 	t.Run("unset", func(t *testing.T) {
 		t.Setenv("YTDLP_COOKIES_FILE", "")
 
-		args, err := ytDlpCookiesArgs()
+		args, cleanup, err := ytDlpCookiesArgs()
+		cleanup()
 		if err != nil {
 			t.Fatalf("ytDlpCookiesArgs() error = %v", err)
 		}
@@ -27,20 +28,32 @@ func TestYtDlpCookiesArgs(t *testing.T) {
 		}
 		t.Setenv("YTDLP_COOKIES_FILE", cookiesPath)
 
-		args, err := ytDlpCookiesArgs()
+		args, cleanup, err := ytDlpCookiesArgs()
 		if err != nil {
 			t.Fatalf("ytDlpCookiesArgs() error = %v", err)
 		}
-		want := []string{"--cookies", cookiesPath}
-		if !reflect.DeepEqual(args, want) {
-			t.Fatalf("ytDlpCookiesArgs() = %v, want %v", args, want)
+		defer cleanup()
+		if len(args) != 2 || args[0] != "--cookies" || args[1] == cookiesPath {
+			t.Fatalf("ytDlpCookiesArgs() = %v, want --cookies and a writable copy", args)
+		}
+		copiedContent, err := os.ReadFile(args[1])
+		if err != nil {
+			t.Fatalf("read writable cookie copy: %v", err)
+		}
+		if !reflect.DeepEqual(copiedContent, []byte("# Netscape HTTP Cookie File\n")) {
+			t.Fatalf("cookie copy = %q, want original contents", copiedContent)
+		}
+		copiedPath := args[1]
+		cleanup()
+		if _, err := os.Stat(copiedPath); !os.IsNotExist(err) {
+			t.Errorf("temporary cookie copy still exists after cleanup: stat error = %v", err)
 		}
 	})
 
 	t.Run("missing file", func(t *testing.T) {
 		t.Setenv("YTDLP_COOKIES_FILE", filepath.Join(t.TempDir(), "missing.txt"))
 
-		if _, err := ytDlpCookiesArgs(); err == nil {
+		if _, _, err := ytDlpCookiesArgs(); err == nil {
 			t.Fatal("ytDlpCookiesArgs() error = nil, want missing-file error")
 		}
 	})
@@ -48,7 +61,7 @@ func TestYtDlpCookiesArgs(t *testing.T) {
 	t.Run("directory", func(t *testing.T) {
 		t.Setenv("YTDLP_COOKIES_FILE", t.TempDir())
 
-		if _, err := ytDlpCookiesArgs(); err == nil {
+		if _, _, err := ytDlpCookiesArgs(); err == nil {
 			t.Fatal("ytDlpCookiesArgs() error = nil, want regular-file error")
 		}
 	})

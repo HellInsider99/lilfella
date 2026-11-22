@@ -17,10 +17,11 @@ func InstagramReel(rawURL string) (string, func(), error) {
 		return "", func() {}, fmt.Errorf("Instagram reel shortcode not found")
 	}
 
-	cookiesArgs, err := ytDlpCookiesArgs()
+	cookiesArgs, cleanupCookies, err := ytDlpCookiesArgs()
 	if err != nil {
 		return "", func() {}, fmt.Errorf("configure yt-dlp cookies: %w", err)
 	}
+	defer cleanupCookies()
 
 	tempDir, err := os.MkdirTemp("", "spotideezer-instagram-")
 	if err != nil {

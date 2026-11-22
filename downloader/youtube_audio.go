@@ -18,10 +18,11 @@ const telegramAudioThumbnailMaxSize = 200_000
 func YouTubeAudio(rawURL string) (string, func(), error) {
 	startedAt := time.Now()
 	log.Printf("downloader: YouTube audio download started")
-	cookiesArgs, err := ytDlpCookiesArgs()
+	cookiesArgs, cleanupCookies, err := ytDlpCookiesArgs()
 	if err != nil {
 		return "", func() {}, fmt.Errorf("configure yt-dlp cookies: %w", err)
 	}
+	defer cleanupCookies()
 	tempDir, err := os.MkdirTemp("", "spotideezer-youtube-audio-")
 	if err != nil {
 		log.Printf("downloader: create YouTube audio temp directory failed: %v", err)

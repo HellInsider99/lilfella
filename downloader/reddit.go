@@ -3,52 +3,16 @@ package downloader
 import (
 	"encoding/json"
 	"fmt"
-	"html"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 type RedditMediaItem struct {
 	URL  string
 	Type string
-}
-
-type redditPostResponse struct {
-	Data struct {
-		Children []struct {
-			Data struct {
-				IsVideo     bool `json:"is_video"`
-				SecureMedia *struct {
-					RedditVideo *struct {
-						FallbackURL string `json:"fallback_url"`
-					} `json:"reddit_video"`
-				} `json:"secure_media"`
-				GalleryData *struct {
-					Items []struct {
-						MediaID string `json:"media_id"`
-					} `json:"items"`
-				} `json:"gallery_data"`
-				MediaMetadata map[string]struct {
-					Status string `json:"status"`
-					S      struct {
-						URL string `json:"u"`
-					} `json:"s"`
-				} `json:"media_metadata"`
-				Preview *struct {
-					Images []struct {
-						Source struct {
-							URL string `json:"url"`
-						} `json:"source"`
-					} `json:"images"`
-				} `json:"preview"`
-			} `json:"data"`
-		} `json:"children"`
-	} `json:"data"`
 }
 
 func validateRedditURL(rawURL string) error {
@@ -83,82 +47,88 @@ func RedditMedia(rawURL string) ([]RedditMediaItem, error) {
 	if err := validateRedditURL(rawURL); err != nil {
 		return nil, err
 	}
-
-	parsed, err := url.Parse(rawURL)
+	cookiesArgs, err := ytDlpCookiesArgs()
 	if err != nil {
-		return nil, fmt.Errorf("parse Reddit URL: %w", err)
-	}
-	if strings.EqualFold(parsed.Hostname(), "redd.it") {
-		return []RedditMediaItem{{URL: rawURL, Type: "video"}}, nil
+		return nil, fmt.Errorf("configure yt-dlp cookies: %w", err)
 	}
 
-	jsonURL := strings.TrimSuffix(rawURL, "/") + ".json"
-	request, err := http.NewRequest(http.MethodGet, jsonURL, nil)
+	args := append([]string{"--dump-single-json", "--no-warnings", "--skip-download"}, cookiesArgs...)
+	args = append(args, rawURL)
+	output, err := exec.Command("yt-dlp", args...).CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("create Reddit request: %w", err)
-	}
-	request.Header.Set("User-Agent", "lilfella/1.0")
-
-	client := &http.Client{Timeout: 20 * time.Second}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("request Reddit post: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Reddit returned %s", response.Status)
+		return nil, fmt.Errorf("inspect Reddit media with yt-dlp: %w: %s", err, output)
 	}
 
-	var payload []redditPostResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("decode Reddit post: %w", err)
+	return parseRedditYTDlpMedia(output)
+}
+
+type redditYTDlpEntry struct {
+	URL       string             `json:"url"`
+	Ext       string             `json:"ext"`
+	Vcodec    string             `json:"vcodec"`
+	Entries   []redditYTDlpEntry `json:"entries"`
+	Thumbnail string             `json:"thumbnail"`
+}
+
+func parseRedditYTDlpMedia(output []byte) ([]RedditMediaItem, error) {
+	var data redditYTDlpEntry
+	if err := json.Unmarshal(output, &data); err != nil {
+		return nil, fmt.Errorf("decode yt-dlp Reddit metadata: %w", err)
 	}
 
-	items := parseRedditMedia(payload)
+	sourceEntries := data.Entries
+	if len(sourceEntries) == 0 {
+		sourceEntries = []redditYTDlpEntry{data}
+	}
+
+	items := make([]RedditMediaItem, 0, len(sourceEntries))
+	seen := make(map[string]bool)
+	for _, entry := range sourceEntries {
+		rawMediaURL := strings.TrimSpace(entry.URL)
+		if rawMediaURL == "" {
+			rawMediaURL = strings.TrimSpace(entry.Thumbnail)
+		}
+		if rawMediaURL == "" || seen[rawMediaURL] {
+			continue
+		}
+		parsed, err := url.Parse(rawMediaURL)
+		if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+			continue
+		}
+
+		mediaType := inferRedditMediaType(entry)
+		items = append(items, RedditMediaItem{URL: rawMediaURL, Type: mediaType})
+		seen[rawMediaURL] = true
+	}
+
 	if len(items) == 0 {
 		return nil, fmt.Errorf("Reddit media URL not found")
 	}
 	return items, nil
 }
 
-func parseRedditMedia(payload []redditPostResponse) []RedditMediaItem {
-	if len(payload) == 0 {
-		return nil
+func inferRedditMediaType(entry redditYTDlpEntry) string {
+	ext := strings.ToLower(strings.TrimPrefix(entry.Ext, "."))
+	if ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "gif" || ext == "webp" {
+		return "image"
 	}
-
-	post := payload[0].Data.Children
-	if len(post) == 0 {
-		return nil
+	if entry.Vcodec != "" && !strings.EqualFold(entry.Vcodec, "none") {
+		return "video"
 	}
-	data := post[0].Data
-
-	if data.GalleryData != nil {
-		items := make([]RedditMediaItem, 0, len(data.GalleryData.Items))
-		for _, galleryItem := range data.GalleryData.Items {
-			media, ok := data.MediaMetadata[galleryItem.MediaID]
-			if !ok || media.Status != "valid" {
-				continue
+	if strings.HasPrefix(strings.ToLower(entry.URL), "http") {
+		parsed, err := url.Parse(entry.URL)
+		if err == nil {
+			host := strings.ToLower(parsed.Hostname())
+			pathExt := strings.ToLower(strings.TrimPrefix(filepath.Ext(parsed.Path), "."))
+			if host == "i.redd.it" || pathExt == "jpg" || pathExt == "jpeg" || pathExt == "png" || pathExt == "gif" || pathExt == "webp" {
+				return "image"
 			}
-			mediaURL := strings.TrimSpace(html.UnescapeString(media.S.URL))
-			if mediaURL != "" {
-				items = append(items, RedditMediaItem{URL: mediaURL, Type: "image"})
+			if pathExt == "mp4" || pathExt == "webm" || pathExt == "m3u8" {
+				return "video"
 			}
 		}
-		if len(items) > 0 {
-			return items
-		}
 	}
-
-	if data.IsVideo {
-		return []RedditMediaItem{{Type: "video"}}
-	}
-	if data.Preview != nil && len(data.Preview.Images) > 0 {
-		mediaURL := strings.TrimSpace(html.UnescapeString(data.Preview.Images[0].Source.URL))
-		if mediaURL != "" {
-			return []RedditMediaItem{{URL: mediaURL, Type: "image"}}
-		}
-	}
-	return nil
+	return "video"
 }
 
 func RedditVideo(rawURL string) (string, func(), error) {

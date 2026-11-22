@@ -1,9 +1,6 @@
 package downloader
 
-import (
-	"encoding/json"
-	"testing"
-)
+import "testing"
 
 func TestValidateRedditURL(t *testing.T) {
 	tests := []struct {
@@ -31,17 +28,14 @@ func TestValidateRedditURL(t *testing.T) {
 }
 
 func TestParseRedditMediaGallery(t *testing.T) {
-	var payload []redditPostResponse
-	if err := json.Unmarshal([]byte(`[
-		{"data":{"children":[{"data":{"gallery_data":{"items":[{"media_id":"one"},{"media_id":"two"}]},"media_metadata":{
-			"one":{"status":"valid","s":{"u":"https://preview.redd.it/one.jpg?width=1080&amp;format=pjpg"}},
-			"two":{"status":"valid","s":{"u":"https://preview.redd.it/two.jpg?width=1080&amp;format=pjpg"}}
-		}}}]}}
-	]`), &payload); err != nil {
+	output := []byte(`{"entries":[
+		{"url":"https://preview.redd.it/one.jpg?width=1080&format=pjpg","ext":"jpg"},
+		{"url":"https://preview.redd.it/two.jpg?width=1080&format=pjpg","ext":"jpg"}
+	]}`)
+	items, err := parseRedditYTDlpMedia(output)
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	items := parseRedditMedia(payload)
 	if len(items) != 2 {
 		t.Fatalf("parseRedditMedia() returned %d items, want 2", len(items))
 	}
@@ -51,11 +45,10 @@ func TestParseRedditMediaGallery(t *testing.T) {
 }
 
 func TestParseRedditMediaVideo(t *testing.T) {
-	var payload []redditPostResponse
-	if err := json.Unmarshal([]byte(`[{"data":{"children":[{"data":{"is_video":true}}]}}]`), &payload); err != nil {
+	items, err := parseRedditYTDlpMedia([]byte(`{"url":"https://v.redd.it/video/DASH_720.mp4","ext":"mp4","vcodec":"h264"}`))
+	if err != nil {
 		t.Fatal(err)
 	}
-	items := parseRedditMedia(payload)
 	if len(items) != 1 || items[0].Type != "video" {
 		t.Fatalf("parseRedditMedia() = %#v, want video item", items)
 	}

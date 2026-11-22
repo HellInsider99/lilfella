@@ -1,5 +1,6 @@
 .git
 .env
+reddit-cookies.txt
 .DS_Store
 **/.DS_Store
 /logs/

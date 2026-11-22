@@ -103,11 +103,14 @@ func redditImageFromUnsupportedURL(output []byte) (RedditMediaItem, bool) {
 }
 
 type redditYTDlpEntry struct {
-	URL       string             `json:"url"`
-	Ext       string             `json:"ext"`
-	Vcodec    string             `json:"vcodec"`
-	Entries   []redditYTDlpEntry `json:"entries"`
-	Thumbnail string             `json:"thumbnail"`
+	URL               string             `json:"url"`
+	Ext               string             `json:"ext"`
+	Vcodec            string             `json:"vcodec"`
+	Entries           []redditYTDlpEntry `json:"entries"`
+	Formats           []redditYTDlpEntry `json:"formats"`
+	RequestedFormats  []redditYTDlpEntry `json:"requested_formats"`
+	RequestedDownload []redditYTDlpEntry `json:"requested_downloads"`
+	Thumbnail         string             `json:"thumbnail"`
 }
 
 func parseRedditYTDlpMedia(output []byte) ([]RedditMediaItem, error) {
@@ -116,35 +119,75 @@ func parseRedditYTDlpMedia(output []byte) ([]RedditMediaItem, error) {
 		return nil, fmt.Errorf("decode yt-dlp Reddit metadata: %w", err)
 	}
 
-	sourceEntries := data.Entries
-	if len(sourceEntries) == 0 {
-		sourceEntries = []redditYTDlpEntry{data}
-	}
-
-	items := make([]RedditMediaItem, 0, len(sourceEntries))
+	items := make([]RedditMediaItem, 0, len(data.Entries)+1)
 	seen := make(map[string]bool)
-	for _, entry := range sourceEntries {
-		rawMediaURL := strings.TrimSpace(entry.URL)
-		if rawMediaURL == "" {
-			rawMediaURL = strings.TrimSpace(entry.Thumbnail)
-		}
-		if rawMediaURL == "" || seen[rawMediaURL] {
-			continue
-		}
-		parsed, err := url.Parse(rawMediaURL)
-		if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
-			continue
-		}
-
-		mediaType := inferRedditMediaType(entry)
-		items = append(items, RedditMediaItem{URL: rawMediaURL, Type: mediaType})
-		seen[rawMediaURL] = true
-	}
+	collectRedditYTDlpMedia(data, &items, seen)
 
 	if len(items) == 0 {
 		return nil, fmt.Errorf("Reddit media URL not found")
 	}
 	return items, nil
+}
+
+func collectRedditYTDlpMedia(entry redditYTDlpEntry, items *[]RedditMediaItem, seen map[string]bool) {
+	formats := append(entry.RequestedFormats, entry.RequestedDownload...)
+	formats = append(formats, entry.Formats...)
+	hasVideoFormat := false
+	for _, format := range formats {
+		if !isRedditYTDlpVideoFormat(format) {
+			continue
+		}
+		hasVideoFormat = true
+		rawMediaURL := strings.TrimSpace(format.URL)
+		if rawMediaURL != "" && !isHTTPURL(rawMediaURL) {
+			continue
+		}
+		key := rawMediaURL
+		if key == "" {
+			key = "video"
+		}
+		if !seen[key] {
+			*items = append(*items, RedditMediaItem{URL: rawMediaURL, Type: "video"})
+			seen[key] = true
+		}
+		break
+	}
+
+	rawMediaURL := strings.TrimSpace(entry.URL)
+	if rawMediaURL == "" && len(formats) == 0 {
+		rawMediaURL = strings.TrimSpace(entry.Thumbnail)
+	}
+	if !hasVideoFormat && rawMediaURL != "" && isHTTPURL(rawMediaURL) && !seen[rawMediaURL] {
+		*items = append(*items, RedditMediaItem{
+			URL:  rawMediaURL,
+			Type: inferRedditMediaType(entry),
+		})
+		seen[rawMediaURL] = true
+	}
+
+	for _, child := range entry.Entries {
+		collectRedditYTDlpMedia(child, items, seen)
+	}
+}
+
+func isRedditYTDlpVideoFormat(entry redditYTDlpEntry) bool {
+	if entry.Vcodec != "" {
+		return !strings.EqualFold(entry.Vcodec, "none")
+	}
+
+	ext := strings.ToLower(strings.TrimPrefix(entry.Ext, "."))
+	switch ext {
+	case "mp4", "webm", "mkv", "mov", "m3u8", "mpd":
+		return true
+	}
+
+	parsed, err := url.Parse(entry.URL)
+	return err == nil && strings.EqualFold(parsed.Hostname(), "v.redd.it")
+}
+
+func isHTTPURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http")
 }
 
 func inferRedditMediaType(entry redditYTDlpEntry) string {

@@ -54,6 +54,20 @@ func TestParseRedditMediaVideo(t *testing.T) {
 	}
 }
 
+func TestParseRedditMediaVideoFormats(t *testing.T) {
+	output := []byte(`{"formats":[
+		{"url":"https://v.redd.it/video/audio","ext":"m4a","vcodec":"none","acodec":"aac"},
+		{"url":"https://v.redd.it/video/DASH_720.mp4","ext":"mp4","vcodec":"h264"}
+	]}`)
+	items, err := parseRedditYTDlpMedia(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Type != "video" {
+		t.Fatalf("parseRedditYTDlpMedia() = %#v, want one video item", items)
+	}
+}
+
 func TestRedditImageFromUnsupportedMediaURL(t *testing.T) {
 	output := []byte("ERROR: Unsupported URL : https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fimage.jpeg%3Fwidth%3D1080\n")
 	item, ok := redditImageFromUnsupportedURL(output)

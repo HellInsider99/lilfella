@@ -1,6 +1,7 @@
 .git
 .env
 reddit-cookies.txt
+instagram-cookies.txt
 .DS_Store
 **/.DS_Store
 /logs/

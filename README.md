@@ -12,7 +12,7 @@ A Telegram bot that matches tracks across Spotify, Deezer, YouTube Music, and Ap
 
    `TELEGRAM_BOT_TOKEN` is required. Spotify matching uses `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`, YouTube Music matching uses `YOUTUBE_API_KEY`. The Deezer and Apple Music integrations do not require API keys.
 
-   To download Reddit media, place your Reddit `reddit-cookies.txt` file next to `docker-compose.yml` on the server. Keep this file private and do not commit it.
+   To download media that requires Instagram login, export your logged-in Instagram cookies in Netscape `cookies.txt` format and save the file as `instagram-cookies.txt` next to `docker-compose.yml` on the server. The bot also accepts `reddit-cookies.txt` for Reddit. These files are ignored by Git and Docker builds and mounted read-only; they contain login credentials, so do not share them or commit them, and revoke the session if a file is exposed.
 
 2. Build the image and start the bot:
 
@@ -20,7 +20,7 @@ A Telegram bot that matches tracks across Spotify, Deezer, YouTube Music, and Ap
    sudo docker compose up --build -d
    ```
 
-   If you add or replace the cookies file while the bot is running, recreate the container to apply the mount:
+   If you add or replace a cookies file while the bot is running, recreate the container to apply the mount:
 
    ```sh
    sudo docker compose up -d --force-recreate bot

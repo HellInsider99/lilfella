@@ -17,7 +17,7 @@ func InstagramReel(rawURL string) (string, func(), error) {
 		return "", func() {}, fmt.Errorf("Instagram reel shortcode not found")
 	}
 
-	cookiesArgs, cleanupCookies, err := ytDlpCookiesArgs()
+	cookiesArgs, cleanupCookies, err := instagramYtDlpCookiesArgs()
 	if err != nil {
 		return "", func() {}, fmt.Errorf("configure yt-dlp cookies: %w", err)
 	}

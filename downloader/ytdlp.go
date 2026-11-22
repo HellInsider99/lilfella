@@ -8,23 +8,34 @@ import (
 )
 
 func ytDlpCookiesArgs() ([]string, func(), error) {
+	return ytDlpCookiesArgsFromEnv("YTDLP_COOKIES_FILE")
+}
+
+func instagramYtDlpCookiesArgs() ([]string, func(), error) {
+	if strings.TrimSpace(os.Getenv("INSTAGRAM_COOKIES_FILE")) == "" {
+		return ytDlpCookiesArgs()
+	}
+	return ytDlpCookiesArgsFromEnv("INSTAGRAM_COOKIES_FILE")
+}
+
+func ytDlpCookiesArgsFromEnv(envName string) ([]string, func(), error) {
 	noCleanup := func() {}
-	cookiesPath := strings.TrimSpace(os.Getenv("YTDLP_COOKIES_FILE"))
+	cookiesPath := strings.TrimSpace(os.Getenv(envName))
 	if cookiesPath == "" {
 		return nil, noCleanup, nil
 	}
 
 	info, err := os.Stat(cookiesPath)
 	if err != nil {
-		return nil, noCleanup, fmt.Errorf("stat YTDLP_COOKIES_FILE: %w", err)
+		return nil, noCleanup, fmt.Errorf("stat %s: %w", envName, err)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, noCleanup, fmt.Errorf("YTDLP_COOKIES_FILE must point to a regular file")
+		return nil, noCleanup, fmt.Errorf("%s must point to a regular file", envName)
 	}
 
 	source, err := os.Open(cookiesPath)
 	if err != nil {
-		return nil, noCleanup, fmt.Errorf("open YTDLP_COOKIES_FILE: %w", err)
+		return nil, noCleanup, fmt.Errorf("open %s: %w", envName, err)
 	}
 	defer source.Close()
 
@@ -38,7 +49,7 @@ func ytDlpCookiesArgs() ([]string, func(), error) {
 	if _, err := io.Copy(tempFile, source); err != nil {
 		tempFile.Close()
 		cleanup()
-		return nil, noCleanup, fmt.Errorf("copy YTDLP_COOKIES_FILE: %w", err)
+		return nil, noCleanup, fmt.Errorf("copy %s: %w", envName, err)
 	}
 	if err := tempFile.Close(); err != nil {
 		cleanup()

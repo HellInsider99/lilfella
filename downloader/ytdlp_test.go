@@ -66,3 +66,55 @@ func TestYtDlpCookiesArgs(t *testing.T) {
 		}
 	})
 }
+
+func TestInstagramYtDlpCookiesArgs(t *testing.T) {
+	t.Run("uses Instagram cookie file when configured", func(t *testing.T) {
+		instagramCookiesPath := filepath.Join(t.TempDir(), "instagram-cookies.txt")
+		if err := os.WriteFile(instagramCookiesPath, []byte("# Instagram cookies\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("INSTAGRAM_COOKIES_FILE", instagramCookiesPath)
+		t.Setenv("YTDLP_COOKIES_FILE", filepath.Join(t.TempDir(), "reddit-cookies.txt"))
+
+		args, cleanup, err := instagramYtDlpCookiesArgs()
+		if err != nil {
+			t.Fatalf("instagramYtDlpCookiesArgs() error = %v", err)
+		}
+		defer cleanup()
+		if len(args) != 2 || args[0] != "--cookies" {
+			t.Fatalf("instagramYtDlpCookiesArgs() = %v, want --cookies and a file path", args)
+		}
+		got, err := os.ReadFile(args[1])
+		if err != nil {
+			t.Fatalf("read copied Instagram cookie file: %v", err)
+		}
+		if string(got) != "# Instagram cookies\n" {
+			t.Fatalf("copied cookie content = %q, want Instagram cookie content", got)
+		}
+	})
+
+	t.Run("falls back to generic cookie file", func(t *testing.T) {
+		cookiesPath := filepath.Join(t.TempDir(), "cookies.txt")
+		if err := os.WriteFile(cookiesPath, []byte("# Netscape HTTP Cookie File\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("INSTAGRAM_COOKIES_FILE", "")
+		t.Setenv("YTDLP_COOKIES_FILE", cookiesPath)
+
+		args, cleanup, err := instagramYtDlpCookiesArgs()
+		if err != nil {
+			t.Fatalf("instagramYtDlpCookiesArgs() error = %v", err)
+		}
+		defer cleanup()
+		if len(args) != 2 || args[0] != "--cookies" {
+			t.Fatalf("instagramYtDlpCookiesArgs() = %v, want --cookies and a file path", args)
+		}
+		got, err := os.ReadFile(args[1])
+		if err != nil {
+			t.Fatalf("read copied generic cookie file: %v", err)
+		}
+		if string(got) != "# Netscape HTTP Cookie File\n" {
+			t.Fatalf("copied cookie content = %q, want generic cookie content", got)
+		}
+	})
+}

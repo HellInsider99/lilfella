@@ -16,6 +16,7 @@ import (
 var (
 	twitterURLPattern   = regexp.MustCompile(`https?://(?:www\.)?(?:x\.com|twitter\.com|vxtwitter\.com)/[^\s]+`)
 	instagramURLPattern = regexp.MustCompile(`https?://(?:(?:www|m)\.)?instagram\.com/(?:reels?|p)/[^\s]+`)
+	redditURLPattern    = regexp.MustCompile(`https?://(?:(?:www|old|new)\.)?reddit\.com/(?:r/[^/\s]+/(?:comments|s|gallery)/[^\s]+)[^\s]*|https?://redd\.it/[A-Za-z0-9]+[^\s]*`)
 	shortsURLPattern    = regexp.MustCompile(`https?://(?:www\.)?(?:youtube\.com/shorts|music\.youtube\.com/shorts)/[^\s?]+`)
 	tiktokURLPattern    = regexp.MustCompile(`https?://(?:(?:www|m)\.)?tiktok\.com/(?:@[^/\s]+/video/\d+|t/[^/\s]+)[^\s]*|https?://(?:vm|vt)\.tiktok\.com/[^\s]+`)
 )
@@ -92,6 +93,9 @@ func findDownloadableMedia(text string) (string, string, bool) {
 	}
 	if match := instagramURLPattern.FindString(text); match != "" {
 		return strings.TrimRight(match, ".,!?)]}"), "instagram", true
+	}
+	if match := redditURLPattern.FindString(text); match != "" {
+		return strings.TrimRight(match, ".,!?)]}"), "reddit", true
 	}
 	if match := shortsURLPattern.FindString(text); match != "" {
 		return strings.TrimRight(match, ".,!?)]}"), "youtube-video", true
@@ -191,6 +195,41 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			return
 		}
 		log.Printf("Instagram video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
+	case "reddit":
+		media, err := downloader.RedditMedia(rawURL)
+		if err != nil {
+			log.Printf("Reddit media resolution failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
+			return
+		}
+		for _, item := range media {
+			if item.Type == "image" {
+				photo := tgbotapi.NewPhoto(message.Chat.ID, tgbotapi.FileURL(item.URL))
+				photo.ReplyToMessageID = message.MessageID
+				if _, err := bot.Send(photo); err != nil {
+					log.Printf("Reddit photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+					failStatus()
+					return
+				}
+				continue
+			}
+
+			filePath, cleanup, err := downloader.RedditVideo(rawURL)
+			if err != nil {
+				log.Printf("Reddit video download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+				failStatus()
+				return
+			}
+			err = sendLocalVideo(bot, message, filePath)
+			cleanup()
+			if err != nil {
+				log.Printf("Reddit video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+				failStatus()
+				return
+			}
+		}
+		log.Printf("Reddit media sent: count=%d chat_id=%d message_id=%d", len(media), message.Chat.ID, message.MessageID)
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "youtube-video":
 		filePath, cleanup, err := downloader.YouTubeVideo(rawURL)

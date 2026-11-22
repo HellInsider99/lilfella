@@ -1,6 +1,6 @@
 # Lifefella
 
-A Telegram bot that matches tracks across Spotify, Deezer, YouTube Music, and Apple Music. It can also download media from supported X/Twitter, Instagram, YouTube Shorts, and TikTok links. The Docker image includes yt-dlp and ffmpeg.
+A Telegram bot that matches tracks across Spotify, Deezer, YouTube Music, and Apple Music. It can also download media from supported X/Twitter, Instagram, Reddit, YouTube Shorts, and TikTok links. The Docker image includes yt-dlp and ffmpeg.
 
 ## Run with Docker Compose
 

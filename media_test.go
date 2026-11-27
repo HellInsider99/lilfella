@@ -1,12 +1,16 @@
 package main
 
 import (
+	"fmt"
+	"strings"
 	"testing"
+
+	"deezer-bot/downloader"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-func TestFindDownloadableMediaInstagram(t *testing.T) {
+func TestFindDownloadableMedia(t *testing.T) {
 	tests := []struct {
 		name      string
 		text      string
@@ -57,6 +61,13 @@ func TestFindDownloadableMediaInstagram(t *testing.T) {
 			wantFound: true,
 		},
 		{
+			name:      "TikTok photo post URL",
+			text:      "https://www.tiktok.com/@user/photo/1234567890",
+			wantURL:   "https://www.tiktok.com/@user/photo/1234567890",
+			wantType:  "tiktok",
+			wantFound: true,
+		},
+		{
 			name:      "post URL with trailing punctuation",
 			text:      "https://www.instagram.com/p/ABC123/.",
 			wantURL:   "https://www.instagram.com/p/ABC123/",
@@ -91,5 +102,77 @@ func TestFindDownloadableMediaInMessageTextLink(t *testing.T) {
 	gotURL, gotType, ok := findDownloadableMediaInMessage(message)
 	if gotURL != "https://www.instagram.com/reel/ABC123/" || gotType != "instagram" || !ok {
 		t.Fatalf("findDownloadableMediaInMessage() = %q, %q, %t; want Instagram reel URL", gotURL, gotType, ok)
+	}
+}
+
+func TestChunkSlice(t *testing.T) {
+	media := make([]downloader.MediaFile, 23)
+	for i := range media {
+		media[i] = downloader.MediaFile{Path: fmt.Sprintf("%03d.jpg", i+1), Type: "image"}
+	}
+
+	groups := chunkSlice(media, telegramMediaGroupLimit)
+	wantSizes := []int{10, 10, 3}
+	if len(groups) != len(wantSizes) {
+		t.Fatalf("got %d groups, want %d", len(groups), len(wantSizes))
+	}
+	next := 0
+	for i, group := range groups {
+		if len(group) != wantSizes[i] {
+			t.Errorf("group %d has %d items, want %d", i, len(group), wantSizes[i])
+		}
+		for _, item := range group {
+			if item != media[next] {
+				t.Fatalf("item order broken at %d: got %q, want %q", next, item.Path, media[next].Path)
+			}
+			next++
+		}
+	}
+
+	if got := chunkSlice(nil, telegramMediaGroupLimit); len(got) != 0 {
+		t.Errorf("chunkSlice(nil) = %v, want no groups", got)
+	}
+}
+
+func TestMediaCaption(t *testing.T) {
+	if got := mediaCaption("  \n "); got != "" {
+		t.Errorf("mediaCaption(blank) = %q, want empty", got)
+	}
+
+	got := mediaCaption("Tom & <Jerry> 🐭")
+	want := "<blockquote expandable>Tom &amp; &lt;Jerry&gt; 🐭</blockquote>"
+	if got != want {
+		t.Errorf("mediaCaption() = %q, want %q", got, want)
+	}
+}
+
+func TestTruncateUTF16(t *testing.T) {
+	if got := truncateUTF16("short", 10); got != "short" {
+		t.Errorf("truncateUTF16(short) = %q, want unchanged", got)
+	}
+
+	// Each emoji is 2 UTF-16 units: 6 emojis = 12 units > 9.
+	got := truncateUTF16("🐭🐭🐭🐭🐭🐭", 9)
+	if got != "🐭🐭🐭🐭…" {
+		t.Errorf("truncateUTF16(emojis) = %q, want %q", got, "🐭🐭🐭🐭…")
+	}
+
+	long := strings.Repeat("a", 2000)
+	got = truncateUTF16(long, telegramCaptionLimit)
+	if n := len([]rune(got)); n != telegramCaptionLimit {
+		t.Errorf("truncateUTF16(long) has %d runes, want %d", n, telegramCaptionLimit)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("truncateUTF16(long) = %q..., want trailing ellipsis", got[:10])
+	}
+}
+
+func TestCaptionOnce(t *testing.T) {
+	caption := &captionOnce{html: "<blockquote>hi</blockquote>"}
+	if got := caption.take(); got != "<blockquote>hi</blockquote>" {
+		t.Errorf("first take() = %q, want the caption", got)
+	}
+	if got := caption.take(); got != "" {
+		t.Errorf("second take() = %q, want empty", got)
 	}
 }

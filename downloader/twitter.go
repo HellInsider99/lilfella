@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
 type twitterResponse struct {
+	Text          string             `json:"text"`
 	MediaURL      string             `json:"media_url"`
 	MediaURLs     json.RawMessage    `json:"mediaURLs"`
 	MediaExtended []TwitterMediaItem `json:"media_extended"`
@@ -61,32 +63,41 @@ func parseTwitterMediaURLs(raw json.RawMessage) []TwitterMediaItem {
 	return nil
 }
 
-func TwitterMedia(rawURL string) ([]TwitterMediaItem, error) {
+// TwitterMedia returns a tweet's media and its text ("" if none).
+func TwitterMedia(rawURL string) ([]TwitterMediaItem, string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse Twitter URL: %w", err)
+		return nil, "", fmt.Errorf("parse Twitter URL: %w", err)
 	}
 	parsed.Scheme = "https"
 	parsed.Host = "api.vxtwitter.com"
 
 	response, err := http.Get(parsed.String())
 	if err != nil {
-		return nil, fmt.Errorf("request Twitter proxy: %w", err)
+		return nil, "", fmt.Errorf("request Twitter proxy: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Twitter proxy returned %s", response.Status)
+		return nil, "", fmt.Errorf("Twitter proxy returned %s", response.Status)
 	}
 
 	var payload twitterResponse
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("decode Twitter proxy response: %w", err)
+		return nil, "", fmt.Errorf("decode Twitter proxy response: %w", err)
 	}
 	media := parseTwitterMedia(payload)
 	if len(media) == 0 {
-		return nil, fmt.Errorf("Twitter media URL not found")
+		return nil, "", fmt.Errorf("Twitter media URL not found")
 	}
-	return media, nil
+	return media, cleanTweetText(payload.Text), nil
+}
+
+var trailingTCoLinkPattern = regexp.MustCompile(`(?:\s*https://t\.co/[A-Za-z0-9]+)+\s*$`)
+
+// cleanTweetText removes the t.co links at the end of a tweet's text. Twitter
+// appends them for attached media, which the bot sends anyway.
+func cleanTweetText(text string) string {
+	return strings.TrimSpace(trailingTCoLinkPattern.ReplaceAllString(text, ""))
 }
 
 func parseTwitterMedia(payload twitterResponse) []TwitterMediaItem {
@@ -113,7 +124,7 @@ func parseTwitterMedia(payload twitterResponse) []TwitterMediaItem {
 }
 
 func TwitterVideoURL(rawURL string) (string, error) {
-	media, err := TwitterMedia(rawURL)
+	media, _, err := TwitterMedia(rawURL)
 	if err != nil {
 		return "", err
 	}

@@ -12,45 +12,124 @@ import (
 
 var instagramPostPathPattern = regexp.MustCompile(`^/(?:reels?|p)/([A-Za-z0-9_-]+)/?$`)
 
-func InstagramReel(rawURL string) (string, func(), error) {
+// InstagramPost is the downloaded media of a post in post order, plus the
+// post's caption (empty if it has none or it could not be read).
+type InstagramPost struct {
+	Items       []MediaFile
+	Description string
+}
+
+// InstagramMedia downloads every image and video of an Instagram post, reel or
+// carousel using gallery-dl, along with the post caption. If gallery-dl fails,
+// it falls back to yt-dlp, which can only fetch videos.
+func InstagramMedia(rawURL string) (InstagramPost, func(), error) {
 	if instagramShortcode(rawURL) == "" {
-		return "", func() {}, fmt.Errorf("Instagram reel shortcode not found")
+		return InstagramPost{}, func() {}, fmt.Errorf("Instagram shortcode not found")
+	}
+
+	post, cleanup, galleryErr := instagramGalleryDLMedia(rawURL)
+	if galleryErr == nil {
+		return post, cleanup, nil
+	}
+
+	videoPath, description, videoCleanup, ytErr := instagramYtDlpVideo(rawURL)
+	if ytErr != nil {
+		return InstagramPost{}, func() {}, fmt.Errorf("gallery-dl: %v; yt-dlp fallback: %w", galleryErr, ytErr)
+	}
+	return InstagramPost{
+		Items:       []MediaFile{{Path: videoPath, Type: "video"}},
+		Description: description,
+	}, videoCleanup, nil
+}
+
+func instagramGalleryDLMedia(rawURL string) (InstagramPost, func(), error) {
+	cookiesArgs, cleanupCookies, err := instagramYtDlpCookiesArgs()
+	if err != nil {
+		return InstagramPost{}, func() {}, fmt.Errorf("configure gallery-dl cookies: %w", err)
+	}
+	defer cleanupCookies()
+
+	// --write-metadata saves a "<file>.json" next to each file; it holds the caption.
+	tempDir, cleanupDir, err := runGalleryDL(rawURL, cookiesArgs, "--write-metadata")
+	if err != nil {
+		return InstagramPost{}, func() {}, fmt.Errorf("Instagram post: %w", err)
+	}
+	cleanups := []func(){cleanupDir}
+	cleanup := func() {
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			cleanups[i]()
+		}
+	}
+
+	items, err := collectMediaFiles(tempDir)
+	if err != nil {
+		cleanup()
+		return InstagramPost{}, func() {}, err
+	}
+	description := readMetadataText(tempDir, "description")
+
+	for i, item := range items {
+		if item.Type != "video" {
+			continue
+		}
+		fittedPath, compressionCleanup, err := fitVideoToTelegramLimit(item.Path)
+		if err != nil {
+			cleanup()
+			return InstagramPost{}, func() {}, err
+		}
+		cleanups = append(cleanups, compressionCleanup)
+		items[i].Path = fittedPath
+	}
+	return InstagramPost{Items: items, Description: description}, cleanup, nil
+}
+
+func InstagramReel(rawURL string) (string, func(), error) {
+	videoPath, _, cleanup, err := instagramYtDlpVideo(rawURL)
+	return videoPath, cleanup, err
+}
+
+// instagramYtDlpVideo downloads an Instagram video with yt-dlp and returns its
+// path and the post caption.
+func instagramYtDlpVideo(rawURL string) (string, string, func(), error) {
+	if instagramShortcode(rawURL) == "" {
+		return "", "", func() {}, fmt.Errorf("Instagram reel shortcode not found")
 	}
 
 	cookiesArgs, cleanupCookies, err := instagramYtDlpCookiesArgs()
 	if err != nil {
-		return "", func() {}, fmt.Errorf("configure yt-dlp cookies: %w", err)
+		return "", "", func() {}, fmt.Errorf("configure yt-dlp cookies: %w", err)
 	}
 	defer cleanupCookies()
 
 	tempDir, err := os.MkdirTemp("", "spotideezer-instagram-")
 	if err != nil {
-		return "", func() {}, fmt.Errorf("create Instagram temp directory: %w", err)
+		return "", "", func() {}, fmt.Errorf("create Instagram temp directory: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(tempDir) }
 	outputPattern := filepath.Join(tempDir, "%(id)s.%(ext)s")
 
 	args := append([]string{"-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]", "-o", outputPattern}, ffmpegLocationArgs()...)
-	args = append(args, "--merge-output-format", "mp4")
+	args = append(args, "--merge-output-format", "mp4", "--write-info-json")
 	args = append(args, cookiesArgs...)
 	args = append(args, rawURL)
 	command := exec.Command("yt-dlp", args...)
 	if output, err := command.CombinedOutput(); err != nil {
 		cleanup()
-		return "", func() {}, fmt.Errorf("run yt-dlp for Instagram video: %w: %s", err, output)
+		return "", "", func() {}, fmt.Errorf("run yt-dlp for Instagram video: %w: %s", err, output)
 	}
 
+	description := readMetadataText(tempDir, "description")
 	videoPath, err := findFileWithExtension(tempDir, ".mp4")
 	if err != nil {
 		cleanup()
-		return "", func() {}, err
+		return "", "", func() {}, err
 	}
 	videoPath, compressionCleanup, err := fitVideoToTelegramLimit(videoPath)
 	if err != nil {
 		cleanup()
-		return "", func() {}, err
+		return "", "", func() {}, err
 	}
-	return videoPath, func() {
+	return videoPath, description, func() {
 		compressionCleanup()
 		cleanup()
 	}, nil

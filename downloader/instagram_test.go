@@ -70,3 +70,9 @@ func TestFindFileWithExtensionReturnsErrorWhenMissing(t *testing.T) {
 		t.Fatal("findFileWithExtension() error = nil, want missing-file error")
 	}
 }
+
+func TestInstagramMediaRejectsURLWithoutShortcode(t *testing.T) {
+	if _, _, err := InstagramMedia("https://www.instagram.com/accounts/login/"); err == nil {
+		t.Fatal("InstagramMedia() error = nil, want missing-shortcode error")
+	}
+}

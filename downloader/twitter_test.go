@@ -48,3 +48,18 @@ func TestParseTwitterMediaSingleImage(t *testing.T) {
 		t.Fatalf("parseTwitterMedia() = %#v, want one image", got)
 	}
 }
+
+func TestCleanTweetText(t *testing.T) {
+	tests := map[string]string{
+		"Look at this https://t.co/AbC123":                    "Look at this",
+		"Two pics https://t.co/one1 https://t.co/two2":        "Two pics",
+		"Read https://t.co/link1 later":                       "Read https://t.co/link1 later",
+		"https://t.co/onlyMedia":                              "",
+		"No links here":                                       "No links here",
+	}
+	for input, want := range tests {
+		if got := cleanTweetText(input); got != want {
+			t.Errorf("cleanTweetText(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

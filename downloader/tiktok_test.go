@@ -10,6 +10,7 @@ func TestValidateTikTokURL(t *testing.T) {
 	}{
 		{name: "standard video", url: "https://www.tiktok.com/@user/video/1234567890"},
 		{name: "mobile video with query", url: "https://m.tiktok.com/@user/video/1234567890?lang=en"},
+		{name: "photo post", url: "https://www.tiktok.com/@user/photo/1234567890"},
 		{name: "short share path", url: "https://www.tiktok.com/t/ZM123456/"},
 		{name: "short link", url: "https://vm.tiktok.com/ZM123456/"},
 		{name: "alternate short link", url: "https://vt.tiktok.com/ZM123456/"},
@@ -31,12 +32,25 @@ func TestValidateTikTokURL(t *testing.T) {
 }
 
 func TestTikTokVideoRejectsInvalidURL(t *testing.T) {
-	path, cleanup, err := TikTokVideo("https://example.com/video")
+	path, _, cleanup, err := TikTokVideo("https://example.com/video")
 	if err == nil {
 		cleanup()
 		t.Fatal("TikTokVideo() error = nil, want unsupported host error")
 	}
 	if path != "" {
 		t.Errorf("TikTokVideo() path = %q, want empty", path)
+	}
+}
+
+func TestIsTikTokPhotoURL(t *testing.T) {
+	tests := map[string]bool{
+		"https://www.tiktok.com/@user/photo/1234567890?lang=en": true,
+		"https://www.tiktok.com/@user/video/1234567890":         false,
+		"https://vm.tiktok.com/ZM123456/":                       false,
+	}
+	for rawURL, want := range tests {
+		if got := IsTikTokPhotoURL(rawURL); got != want {
+			t.Errorf("IsTikTokPhotoURL(%q) = %t, want %t", rawURL, got, want)
+		}
 	}
 }

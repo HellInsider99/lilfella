@@ -132,16 +132,28 @@ func findDownloadableMediaInMessage(message *tgbotapi.Message) (string, string, 
 	return "", "", false
 }
 
-// handleDownloadableMedia downloads and sends the media behind rawURL. It posts
-// no status message: only the media is sent, and failures are only logged.
 func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, rawURL, mediaType string) {
 	log.Printf("media download started: type=%s chat_id=%d message_id=%d", mediaType, message.Chat.ID, message.MessageID)
+	status := tgbotapi.NewMessage(message.Chat.ID, "⏳ Посилання отримано. Починаю завантаження медіа...")
+	status.DisableNotification = true
+	if message.Chat.Type == "group" || message.Chat.Type == "supergroup" {
+		status.ReplyToMessageID = message.MessageID
+	}
+	statusMessage, err := bot.Send(status)
+	if err != nil {
+		log.Printf("failed to send media status: type=%s chat_id=%d message_id=%d: %v", mediaType, message.Chat.ID, message.MessageID, err)
+		return
+	}
+	failStatus := func() {
+		editStatus(bot, message.Chat.ID, statusMessage.MessageID, "❌ Не вдалося завантажити або надіслати медіа 😕")
+	}
 
 	switch mediaType {
 	case "twitter":
 		media, text, err := downloader.TwitterMedia(rawURL)
 		if err != nil {
 			log.Printf("Twitter media resolution failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
 			return
 		}
 		caption := &captionOnce{html: mediaCaption(text)}
@@ -155,6 +167,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			pendingPhotos = nil
 			if err != nil {
 				log.Printf("Twitter photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+				failStatus()
 				return false
 			}
 			return true
@@ -177,10 +190,12 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 				video.SupportsStreaming = true
 				if _, err := bot.Send(video); err != nil {
 					log.Printf("Twitter video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+					failStatus()
 					return
 				}
 			default:
 				log.Printf("unsupported Twitter media type: type=%q url=%q chat_id=%d message_id=%d", item.Type, item.URL, message.Chat.ID, message.MessageID)
+				failStatus()
 				return
 			}
 		}
@@ -188,22 +203,27 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			return
 		}
 		log.Printf("Twitter media sent: count=%d has_caption=%t chat_id=%d message_id=%d", len(media), text != "", message.Chat.ID, message.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "instagram":
 		post, cleanup, err := downloader.InstagramMedia(rawURL)
 		if err != nil {
 			log.Printf("Instagram download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
 			return
 		}
 		defer cleanup()
 		if err := sendMediaFiles(bot, message, post.Items, mediaCaption(post.Description)); err != nil {
 			log.Printf("Instagram media send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
 			return
 		}
 		log.Printf("Instagram media sent: count=%d has_caption=%t chat_id=%d message_id=%d", len(post.Items), post.Description != "", message.Chat.ID, message.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "reddit":
 		media, text, err := downloader.RedditMedia(rawURL)
 		if err != nil {
 			log.Printf("Reddit media resolution failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
 			return
 		}
 		caption := &captionOnce{html: mediaCaption(text)}
@@ -217,6 +237,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			pendingPhotos = nil
 			if err != nil {
 				log.Printf("Reddit photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+				failStatus()
 				return false
 			}
 			return true
@@ -233,12 +254,14 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			filePath, cleanup, err := downloader.RedditVideo(rawURL)
 			if err != nil {
 				log.Printf("Reddit video download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+				failStatus()
 				return
 			}
 			err = sendLocalVideo(bot, message, filePath, caption.take())
 			cleanup()
 			if err != nil {
 				log.Printf("Reddit video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+				failStatus()
 				return
 			}
 		}
@@ -246,18 +269,22 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			return
 		}
 		log.Printf("Reddit media sent: count=%d has_caption=%t chat_id=%d message_id=%d", len(media), text != "", message.Chat.ID, message.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "youtube-video":
 		filePath, title, cleanup, err := downloader.YouTubeVideo(rawURL)
 		if err != nil {
 			log.Printf("YouTube video download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
 			return
 		}
 		defer cleanup()
 		if err := sendLocalVideo(bot, message, filePath, mediaCaption(title)); err != nil {
 			log.Printf("YouTube video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
 			return
 		}
 		log.Printf("YouTube video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "tiktok":
 		if !downloader.IsTikTokPhotoURL(rawURL) {
 			filePath, description, cleanup, err := downloader.TikTokVideo(rawURL)
@@ -265,9 +292,11 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 				defer cleanup()
 				if err := sendLocalVideo(bot, message, filePath, mediaCaption(description)); err != nil {
 					log.Printf("TikTok video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+					failStatus()
 					return
 				}
 				log.Printf("TikTok video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
+				deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 				return
 			}
 			// Short links can lead to photo posts, which yt-dlp can't download.
@@ -277,16 +306,20 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 		photos, description, cleanup, err := downloader.TikTokPhotos(rawURL)
 		if err != nil {
 			log.Printf("TikTok download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
 			return
 		}
 		defer cleanup()
 		if err := sendMediaFiles(bot, message, photos, mediaCaption(description)); err != nil {
 			log.Printf("TikTok photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
 			return
 		}
 		log.Printf("TikTok photos sent: count=%d chat_id=%d message_id=%d", len(photos), message.Chat.ID, message.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	default:
 		log.Printf("unsupported media type: type=%q chat_id=%d message_id=%d", mediaType, message.Chat.ID, message.MessageID)
+		failStatus()
 	}
 }
 

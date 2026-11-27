@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"deezer-bot/downloader"
 
@@ -185,19 +186,19 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 		log.Printf("Twitter media sent: count=%d chat_id=%d message_id=%d", len(media), message.Chat.ID, message.MessageID)
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "instagram":
-		media, cleanup, err := downloader.InstagramMedia(rawURL)
+		post, cleanup, err := downloader.InstagramMedia(rawURL)
 		if err != nil {
 			log.Printf("Instagram download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			failStatus()
 			return
 		}
 		defer cleanup()
-		if err := sendInstagramMedia(bot, message, media); err != nil {
+		if err := sendInstagramMedia(bot, message, post.Items, instagramCaption(post.Description)); err != nil {
 			log.Printf("Instagram media send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			failStatus()
 			return
 		}
-		log.Printf("Instagram media sent: count=%d chat_id=%d message_id=%d", len(media), message.Chat.ID, message.MessageID)
+		log.Printf("Instagram media sent: count=%d has_caption=%t chat_id=%d message_id=%d", len(post.Items), post.Description != "", message.Chat.ID, message.MessageID)
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "reddit":
 		media, err := downloader.RedditMedia(rawURL)
@@ -272,7 +273,17 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 }
 
 func sendLocalVideo(bot *tgbotapi.BotAPI, message *tgbotapi.Message, filePath string) error {
+	return sendLocalVideoWithCaption(bot, message, filePath, "")
+}
+
+// sendLocalVideoWithCaption sends a local video; captionHTML, if not empty, is
+// sent with HTML parse mode.
+func sendLocalVideoWithCaption(bot *tgbotapi.BotAPI, message *tgbotapi.Message, filePath, captionHTML string) error {
 	video := tgbotapi.NewVideo(message.Chat.ID, tgbotapi.FilePath(filePath))
+	if captionHTML != "" {
+		video.Caption = captionHTML
+		video.ParseMode = tgbotapi.ModeHTML
+	}
 	video.ReplyToMessageID = message.MessageID
 	video.DisableNotification = true
 	video.SupportsStreaming = true
@@ -292,15 +303,69 @@ func sendLocalVideo(bot *tgbotapi.BotAPI, message *tgbotapi.Message, filePath st
 // telegramMediaGroupLimit is the maximum number of items Telegram accepts in one album.
 const telegramMediaGroupLimit = 10
 
+// telegramCaptionLimit is the maximum caption length Telegram accepts, in
+// UTF-16 code units, counted after HTML tags are removed.
+const telegramCaptionLimit = 1024
+
+// instagramCaption formats a post description as an HTML expandable quote for
+// a Telegram caption, trimming it to fit telegramCaptionLimit. It returns "" for
+// an empty description.
+func instagramCaption(description string) string {
+	description = strings.TrimSpace(description)
+	if description == "" {
+		return ""
+	}
+	return "<blockquote expandable>" + html.EscapeString(truncateUTF16(description, telegramCaptionLimit)) + "</blockquote>"
+}
+
+// truncateUTF16 shortens text to at most limit UTF-16 code units (how Telegram
+// counts length), ending with "…" when it had to cut. It never splits a rune.
+func truncateUTF16(text string, limit int) string {
+	length := 0
+	for _, r := range text {
+		length += utf16RuneLen(r)
+	}
+	if length <= limit {
+		return text
+	}
+
+	const ellipsis = "…"
+	budget := limit - utf16RuneLen([]rune(ellipsis)[0])
+	used := 0
+	for i, r := range text {
+		if used+utf16RuneLen(r) > budget {
+			return strings.TrimRightFunc(text[:i], unicode.IsSpace) + ellipsis
+		}
+		used += utf16RuneLen(r)
+	}
+	return text
+}
+
+func utf16RuneLen(r rune) int {
+	if r >= 0x10000 {
+		return 2
+	}
+	return 1
+}
+
 // sendInstagramMedia sends post media in post order, grouped into albums of up
 // to telegramMediaGroupLimit items. A group with a single item (an album needs
-// at least two) is sent as a regular photo or video message.
-func sendInstagramMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, media []downloader.InstagramMediaItem) error {
-	for _, group := range chunkInstagramMedia(media, telegramMediaGroupLimit) {
+// at least two) is sent as a regular photo or video message. captionHTML, if
+// not empty, is attached to the first item, so it shows under the first message.
+func sendInstagramMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, media []downloader.InstagramMediaItem, captionHTML string) error {
+	for groupIndex, group := range chunkInstagramMedia(media, telegramMediaGroupLimit) {
+		caption := ""
+		if groupIndex == 0 {
+			caption = captionHTML
+		}
 		if len(group) == 1 {
 			item := group[0]
 			if item.Type == "image" {
 				photo := tgbotapi.NewPhoto(message.Chat.ID, tgbotapi.FilePath(item.Path))
+				if caption != "" {
+					photo.Caption = caption
+					photo.ParseMode = tgbotapi.ModeHTML
+				}
 				photo.ReplyToMessageID = message.MessageID
 				photo.DisableNotification = true
 				if _, err := bot.Send(photo); err != nil {
@@ -308,28 +373,40 @@ func sendInstagramMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, media [
 				}
 				continue
 			}
-			if err := sendLocalVideo(bot, message, item.Path); err != nil {
+			if err := sendLocalVideoWithCaption(bot, message, item.Path, caption); err != nil {
 				return fmt.Errorf("send video: %w", err)
 			}
 			continue
 		}
 
-		if err := sendInstagramAlbum(bot, message, group); err != nil {
+		if err := sendInstagramAlbum(bot, message, group, caption); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func sendInstagramAlbum(bot *tgbotapi.BotAPI, message *tgbotapi.Message, group []downloader.InstagramMediaItem) error {
+// sendInstagramAlbum sends group as one album. captionHTML, if not empty, goes
+// on the first item; Telegram shows it under the album.
+func sendInstagramAlbum(bot *tgbotapi.BotAPI, message *tgbotapi.Message, group []downloader.InstagramMediaItem, captionHTML string) error {
 	files := make([]interface{}, 0, len(group))
-	for _, item := range group {
+	for i, item := range group {
+		caption, parseMode := "", ""
+		if i == 0 && captionHTML != "" {
+			caption, parseMode = captionHTML, tgbotapi.ModeHTML
+		}
+
 		if item.Type == "image" {
-			files = append(files, tgbotapi.NewInputMediaPhoto(tgbotapi.FilePath(item.Path)))
+			photo := tgbotapi.NewInputMediaPhoto(tgbotapi.FilePath(item.Path))
+			photo.Caption = caption
+			photo.ParseMode = parseMode
+			files = append(files, photo)
 			continue
 		}
 
 		video := tgbotapi.NewInputMediaVideo(tgbotapi.FilePath(item.Path))
+		video.Caption = caption
+		video.ParseMode = parseMode
 		video.SupportsStreaming = true
 		thumbnailPath, cleanupThumbnail, err := downloader.VideoThumbnail(item.Path)
 		if err != nil {

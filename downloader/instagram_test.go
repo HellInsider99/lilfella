@@ -109,3 +109,25 @@ func TestInstagramMediaRejectsURLWithoutShortcode(t *testing.T) {
 		t.Fatal("InstagramMedia() error = nil, want missing-shortcode error")
 	}
 }
+
+func TestReadInstagramDescription(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"001.jpg":      "x",
+		"000.bad.json": "not json",
+		"001.jpg.json": `{"description": "  Hello from the post  ", "num": 1}`,
+		"002.mp4.json": `{"description": "second"}`,
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := readInstagramDescription(dir); got != "Hello from the post" {
+		t.Errorf("readInstagramDescription() = %q, want %q", got, "Hello from the post")
+	}
+	if got := readInstagramDescription(t.TempDir()); got != "" {
+		t.Errorf("readInstagramDescription(empty dir) = %q, want empty", got)
+	}
+}

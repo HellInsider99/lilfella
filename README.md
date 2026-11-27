@@ -14,14 +14,6 @@ A Telegram bot that matches tracks across Spotify, Deezer, YouTube Music, and Ap
 
    To download media that requires Instagram login, export your logged-in Instagram cookies in Netscape `cookies.txt` format and save the file as `instagram-cookies.txt` next to `docker-compose.yml` on the server. The bot also accepts `reddit-cookies.txt` for Reddit. These files are ignored by Git and Docker builds and mounted read-only; they contain login credentials, so do not share them or commit them, and revoke the session if a file is exposed.
 
-   While downloading media, the bot posts a "⏳ ... завантаження медіа" status message only in chats listed in `un-vanya-list.json`. In every other chat it sends just the media, and a failed download is only logged. Create the file next to `docker-compose.yml` as a JSON array of chat IDs (each incoming message logs its `chat_id`):
-
-   ```sh
-   cp un-vanya-list.example.json un-vanya-list.json
-   ```
-
-   Create it even if it should stay empty (`[]`); otherwise Docker mounts an empty directory in its place, and the bot logs an `un-vanya-list ignored` error and shows no status messages anywhere. The list is read at startup, so restart the bot after editing it.
-
 2. Build the image and start the bot:
 
    ```sh

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 )
 
@@ -17,6 +18,16 @@ type statusChatList map[int64]bool
 
 func (list statusChatList) Contains(chatID int64) bool {
 	return list[chatID]
+}
+
+// IDs returns the chat IDs in the list, sorted, for logging.
+func (list statusChatList) IDs() []int64 {
+	ids := make([]int64, 0, len(list))
+	for id := range list {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 // loadStatusChatList reads the list from UN_VANYA_LIST_FILE, or

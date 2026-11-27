@@ -55,7 +55,7 @@ func main() {
 	if err != nil {
 		log.Printf("un-vanya-list ignored, no chat will get status messages: %v", err)
 	} else {
-		log.Printf("un-vanya-list loaded: path=%s chats=%d", statusChatsPath, len(statusChats))
+		log.Printf("un-vanya-list loaded: path=%s chats=%d ids=%v", statusChatsPath, len(statusChats), statusChats.IDs())
 	}
 
 	log.Printf("Bot started as @%s", bot.Self.UserName)

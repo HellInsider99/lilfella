@@ -192,23 +192,10 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			return
 		}
 		defer cleanup()
-		for _, item := range media {
-			if item.Type == "image" {
-				photo := tgbotapi.NewPhoto(message.Chat.ID, tgbotapi.FilePath(item.Path))
-				photo.ReplyToMessageID = message.MessageID
-				photo.DisableNotification = true
-				if _, err := bot.Send(photo); err != nil {
-					log.Printf("Instagram photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
-					failStatus()
-					return
-				}
-				continue
-			}
-			if err := sendLocalVideo(bot, message, item.Path); err != nil {
-				log.Printf("Instagram video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
-				failStatus()
-				return
-			}
+		if err := sendInstagramMedia(bot, message, media); err != nil {
+			log.Printf("Instagram media send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			failStatus()
+			return
 		}
 		log.Printf("Instagram media sent: count=%d chat_id=%d message_id=%d", len(media), message.Chat.ID, message.MessageID)
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
@@ -300,6 +287,78 @@ func sendLocalVideo(bot *tgbotapi.BotAPI, message *tgbotapi.Message, filePath st
 
 	_, err = bot.Send(video)
 	return err
+}
+
+// telegramMediaGroupLimit is the maximum number of items Telegram accepts in one album.
+const telegramMediaGroupLimit = 10
+
+// sendInstagramMedia sends post media in post order, grouped into albums of up
+// to telegramMediaGroupLimit items. A group with a single item (an album needs
+// at least two) is sent as a regular photo or video message.
+func sendInstagramMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, media []downloader.InstagramMediaItem) error {
+	for _, group := range chunkInstagramMedia(media, telegramMediaGroupLimit) {
+		if len(group) == 1 {
+			item := group[0]
+			if item.Type == "image" {
+				photo := tgbotapi.NewPhoto(message.Chat.ID, tgbotapi.FilePath(item.Path))
+				photo.ReplyToMessageID = message.MessageID
+				photo.DisableNotification = true
+				if _, err := bot.Send(photo); err != nil {
+					return fmt.Errorf("send photo: %w", err)
+				}
+				continue
+			}
+			if err := sendLocalVideo(bot, message, item.Path); err != nil {
+				return fmt.Errorf("send video: %w", err)
+			}
+			continue
+		}
+
+		if err := sendInstagramAlbum(bot, message, group); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sendInstagramAlbum(bot *tgbotapi.BotAPI, message *tgbotapi.Message, group []downloader.InstagramMediaItem) error {
+	files := make([]interface{}, 0, len(group))
+	for _, item := range group {
+		if item.Type == "image" {
+			files = append(files, tgbotapi.NewInputMediaPhoto(tgbotapi.FilePath(item.Path)))
+			continue
+		}
+
+		video := tgbotapi.NewInputMediaVideo(tgbotapi.FilePath(item.Path))
+		video.SupportsStreaming = true
+		thumbnailPath, cleanupThumbnail, err := downloader.VideoThumbnail(item.Path)
+		if err != nil {
+			log.Printf("video thumbnail generation failed; sending without custom thumbnail: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+		} else {
+			defer cleanupThumbnail()
+			video.Thumb = tgbotapi.FilePath(thumbnailPath)
+		}
+		files = append(files, video)
+	}
+
+	album := tgbotapi.NewMediaGroup(message.Chat.ID, files)
+	album.ReplyToMessageID = message.MessageID
+	album.DisableNotification = true
+	if _, err := bot.SendMediaGroup(album); err != nil {
+		return fmt.Errorf("send album of %d items: %w", len(group), err)
+	}
+	return nil
+}
+
+// chunkInstagramMedia splits media into consecutive groups of at most size
+// items, preserving order.
+func chunkInstagramMedia(media []downloader.InstagramMediaItem, size int) [][]downloader.InstagramMediaItem {
+	var groups [][]downloader.InstagramMediaItem
+	for start := 0; start < len(media); start += size {
+		end := min(start+size, len(media))
+		groups = append(groups, media[start:end])
+	}
+	return groups
 }
 
 func findSourcePlatform(text string, platforms []Platform) (Platform, bool) {

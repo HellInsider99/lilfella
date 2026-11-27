@@ -1,7 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"testing"
+
+	"deezer-bot/downloader"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -91,5 +94,34 @@ func TestFindDownloadableMediaInMessageTextLink(t *testing.T) {
 	gotURL, gotType, ok := findDownloadableMediaInMessage(message)
 	if gotURL != "https://www.instagram.com/reel/ABC123/" || gotType != "instagram" || !ok {
 		t.Fatalf("findDownloadableMediaInMessage() = %q, %q, %t; want Instagram reel URL", gotURL, gotType, ok)
+	}
+}
+
+func TestChunkInstagramMedia(t *testing.T) {
+	media := make([]downloader.InstagramMediaItem, 23)
+	for i := range media {
+		media[i] = downloader.InstagramMediaItem{Path: fmt.Sprintf("%03d.jpg", i+1), Type: "image"}
+	}
+
+	groups := chunkInstagramMedia(media, telegramMediaGroupLimit)
+	wantSizes := []int{10, 10, 3}
+	if len(groups) != len(wantSizes) {
+		t.Fatalf("got %d groups, want %d", len(groups), len(wantSizes))
+	}
+	next := 0
+	for i, group := range groups {
+		if len(group) != wantSizes[i] {
+			t.Errorf("group %d has %d items, want %d", i, len(group), wantSizes[i])
+		}
+		for _, item := range group {
+			if item != media[next] {
+				t.Fatalf("item order broken at %d: got %q, want %q", next, item.Path, media[next].Path)
+			}
+			next++
+		}
+	}
+
+	if got := chunkInstagramMedia(nil, telegramMediaGroupLimit); len(got) != 0 {
+		t.Errorf("chunkInstagramMedia(nil) = %v, want no groups", got)
 	}
 }

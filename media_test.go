@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"deezer-bot/downloader"
@@ -130,5 +131,48 @@ func TestChunkSlice(t *testing.T) {
 
 	if got := chunkSlice(nil, telegramMediaGroupLimit); len(got) != 0 {
 		t.Errorf("chunkSlice(nil) = %v, want no groups", got)
+	}
+}
+
+func TestMediaCaption(t *testing.T) {
+	if got := mediaCaption("  \n "); got != "" {
+		t.Errorf("mediaCaption(blank) = %q, want empty", got)
+	}
+
+	got := mediaCaption("Tom & <Jerry> 🐭")
+	want := "<blockquote expandable>Tom &amp; &lt;Jerry&gt; 🐭</blockquote>"
+	if got != want {
+		t.Errorf("mediaCaption() = %q, want %q", got, want)
+	}
+}
+
+func TestTruncateUTF16(t *testing.T) {
+	if got := truncateUTF16("short", 10); got != "short" {
+		t.Errorf("truncateUTF16(short) = %q, want unchanged", got)
+	}
+
+	// Each emoji is 2 UTF-16 units: 6 emojis = 12 units > 9.
+	got := truncateUTF16("🐭🐭🐭🐭🐭🐭", 9)
+	if got != "🐭🐭🐭🐭…" {
+		t.Errorf("truncateUTF16(emojis) = %q, want %q", got, "🐭🐭🐭🐭…")
+	}
+
+	long := strings.Repeat("a", 2000)
+	got = truncateUTF16(long, telegramCaptionLimit)
+	if n := len([]rune(got)); n != telegramCaptionLimit {
+		t.Errorf("truncateUTF16(long) has %d runes, want %d", n, telegramCaptionLimit)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("truncateUTF16(long) = %q..., want trailing ellipsis", got[:10])
+	}
+}
+
+func TestCaptionOnce(t *testing.T) {
+	caption := &captionOnce{html: "<blockquote>hi</blockquote>"}
+	if got := caption.take(); got != "<blockquote>hi</blockquote>" {
+		t.Errorf("first take() = %q, want the caption", got)
+	}
+	if got := caption.take(); got != "" {
+		t.Errorf("second take() = %q, want empty", got)
 	}
 }

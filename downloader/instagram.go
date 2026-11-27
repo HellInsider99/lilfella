@@ -1,7 +1,6 @@
 package downloader
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -67,7 +66,7 @@ func instagramGalleryDLMedia(rawURL string) (InstagramPost, func(), error) {
 		cleanup()
 		return InstagramPost{}, func() {}, err
 	}
-	description := readInstagramDescription(tempDir)
+	description := readMetadataText(tempDir, "description")
 
 	for i, item := range items {
 		if item.Type != "video" {
@@ -82,35 +81,6 @@ func instagramGalleryDLMedia(rawURL string) (InstagramPost, func(), error) {
 		items[i].Path = fittedPath
 	}
 	return InstagramPost{Items: items, Description: description}, cleanup, nil
-}
-
-// readInstagramDescription returns the post caption from the first metadata
-// JSON file in dir that has one (gallery-dl's "<file>.json" or yt-dlp's
-// ".info.json"; both use the "description" key). It returns "" if none is found.
-func readInstagramDescription(dir string) string {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return ""
-	}
-	for _, entry := range entries {
-		if !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-		if err != nil {
-			continue
-		}
-		var metadata struct {
-			Description string `json:"description"`
-		}
-		if json.Unmarshal(data, &metadata) != nil {
-			continue
-		}
-		if description := strings.TrimSpace(metadata.Description); description != "" {
-			return description
-		}
-	}
-	return ""
 }
 
 func InstagramReel(rawURL string) (string, func(), error) {
@@ -148,7 +118,7 @@ func instagramYtDlpVideo(rawURL string) (string, string, func(), error) {
 		return "", "", func() {}, fmt.Errorf("run yt-dlp for Instagram video: %w: %s", err, output)
 	}
 
-	description := readInstagramDescription(tempDir)
+	description := readMetadataText(tempDir, "description")
 	videoPath, err := findFileWithExtension(tempDir, ".mp4")
 	if err != nil {
 		cleanup()

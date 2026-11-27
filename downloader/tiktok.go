@@ -16,44 +16,47 @@ var (
 	tikTokShortPathPattern = regexp.MustCompile(`^/t/[^/]+/?$`)
 )
 
-func TikTokVideo(rawURL string) (string, func(), error) {
+// TikTokVideo downloads a TikTok video with yt-dlp and returns its path and
+// the post caption ("" if it has none).
+func TikTokVideo(rawURL string) (string, string, func(), error) {
 	if err := validateTikTokURL(rawURL); err != nil {
-		return "", func() {}, err
+		return "", "", func() {}, err
 	}
 
 	cookiesArgs, cleanupCookies, err := ytDlpCookiesArgs()
 	if err != nil {
-		return "", func() {}, fmt.Errorf("configure yt-dlp cookies: %w", err)
+		return "", "", func() {}, fmt.Errorf("configure yt-dlp cookies: %w", err)
 	}
 	defer cleanupCookies()
 
 	tempDir, err := os.MkdirTemp("", "spotideezer-tiktok-")
 	if err != nil {
-		return "", func() {}, fmt.Errorf("create TikTok temp directory: %w", err)
+		return "", "", func() {}, fmt.Errorf("create TikTok temp directory: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(tempDir) }
 	outputPattern := filepath.Join(tempDir, "%(id)s.%(ext)s")
 
-	args := append([]string{"-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]", "-o", outputPattern}, ffmpegLocationArgs()...)
+	args := append([]string{"-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]", "-o", outputPattern, "--write-info-json"}, ffmpegLocationArgs()...)
 	args = append(args, cookiesArgs...)
 	args = append(args, rawURL)
 	command := exec.Command("yt-dlp", args...)
 	if output, err := command.CombinedOutput(); err != nil {
 		cleanup()
-		return "", func() {}, fmt.Errorf("run yt-dlp for TikTok video: %w: %s", err, output)
+		return "", "", func() {}, fmt.Errorf("run yt-dlp for TikTok video: %w: %s", err, output)
 	}
 
+	description := readMetadataText(tempDir, "description")
 	videoPath, err := findFileWithExtension(tempDir, ".mp4")
 	if err != nil {
 		cleanup()
-		return "", func() {}, err
+		return "", "", func() {}, err
 	}
 	videoPath, compressionCleanup, err := fitVideoToTelegramLimit(videoPath)
 	if err != nil {
 		cleanup()
-		return "", func() {}, err
+		return "", "", func() {}, err
 	}
-	return videoPath, func() {
+	return videoPath, description, func() {
 		compressionCleanup()
 		cleanup()
 	}, nil
@@ -68,28 +71,30 @@ func IsTikTokPhotoURL(rawURL string) bool {
 
 // TikTokPhotos downloads the pictures of a TikTok photo post (slideshow) in
 // post order with gallery-dl; yt-dlp cannot download them. The slideshow's
-// background music is skipped.
-func TikTokPhotos(rawURL string) ([]MediaFile, func(), error) {
+// background music is skipped. It also returns the post caption ("" if none).
+func TikTokPhotos(rawURL string) ([]MediaFile, string, func(), error) {
 	if err := validateTikTokURL(rawURL); err != nil {
-		return nil, func() {}, err
+		return nil, "", func() {}, err
 	}
 
 	cookiesArgs, cleanupCookies, err := ytDlpCookiesArgs()
 	if err != nil {
-		return nil, func() {}, fmt.Errorf("configure gallery-dl cookies: %w", err)
+		return nil, "", func() {}, fmt.Errorf("configure gallery-dl cookies: %w", err)
 	}
 	defer cleanupCookies()
 
-	tempDir, cleanup, err := runGalleryDL(rawURL, cookiesArgs, "-o", "audio=false", "-o", "videos=false")
+	tempDir, cleanup, err := runGalleryDL(rawURL, cookiesArgs, "-o", "audio=false", "-o", "videos=false", "--write-metadata")
 	if err != nil {
-		return nil, func() {}, fmt.Errorf("TikTok photo post: %w", err)
+		return nil, "", func() {}, fmt.Errorf("TikTok photo post: %w", err)
 	}
 
 	files, err := collectMediaFiles(tempDir)
 	if err != nil {
 		cleanup()
-		return nil, func() {}, err
+		return nil, "", func() {}, err
 	}
+	// gallery-dl keeps TikTok's own field name, "desc", for the caption.
+	description := readMetadataText(tempDir, "desc", "description")
 	var images []MediaFile
 	for _, file := range files {
 		if file.Type == "image" {
@@ -98,9 +103,9 @@ func TikTokPhotos(rawURL string) ([]MediaFile, func(), error) {
 	}
 	if len(images) == 0 {
 		cleanup()
-		return nil, func() {}, fmt.Errorf("no TikTok photos found")
+		return nil, "", func() {}, fmt.Errorf("no TikTok photos found")
 	}
-	return images, cleanup, nil
+	return images, description, cleanup, nil
 }
 
 func validateTikTokURL(rawURL string) error {

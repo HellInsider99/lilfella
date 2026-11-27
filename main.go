@@ -150,16 +150,20 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 
 	switch mediaType {
 	case "twitter":
-		media, err := downloader.TwitterMedia(rawURL)
+		media, text, err := downloader.TwitterMedia(rawURL)
 		if err != nil {
 			log.Printf("Twitter media resolution failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			failStatus()
 			return
 		}
+		caption := &captionOnce{html: mediaCaption(text)}
 		// Consecutive photos are collected and sent as albums, keeping post order.
 		var pendingPhotos []string
 		flushPhotos := func() bool {
-			err := sendPhotoURLs(bot, message, pendingPhotos)
+			if len(pendingPhotos) == 0 {
+				return true
+			}
+			err := sendPhotoURLs(bot, message, pendingPhotos, caption.take())
 			pendingPhotos = nil
 			if err != nil {
 				log.Printf("Twitter photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
@@ -177,6 +181,10 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 					return
 				}
 				video := tgbotapi.NewVideo(message.Chat.ID, tgbotapi.FileURL(item.URL))
+				if captionHTML := caption.take(); captionHTML != "" {
+					video.Caption = captionHTML
+					video.ParseMode = tgbotapi.ModeHTML
+				}
 				video.ReplyToMessageID = message.MessageID
 				video.DisableNotification = true
 				video.SupportsStreaming = true
@@ -194,7 +202,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 		if !flushPhotos() {
 			return
 		}
-		log.Printf("Twitter media sent: count=%d chat_id=%d message_id=%d", len(media), message.Chat.ID, message.MessageID)
+		log.Printf("Twitter media sent: count=%d has_caption=%t chat_id=%d message_id=%d", len(media), text != "", message.Chat.ID, message.MessageID)
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "instagram":
 		post, cleanup, err := downloader.InstagramMedia(rawURL)
@@ -204,7 +212,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			return
 		}
 		defer cleanup()
-		if err := sendMediaFiles(bot, message, post.Items, instagramCaption(post.Description)); err != nil {
+		if err := sendMediaFiles(bot, message, post.Items, mediaCaption(post.Description)); err != nil {
 			log.Printf("Instagram media send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			failStatus()
 			return
@@ -212,16 +220,20 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 		log.Printf("Instagram media sent: count=%d has_caption=%t chat_id=%d message_id=%d", len(post.Items), post.Description != "", message.Chat.ID, message.MessageID)
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "reddit":
-		media, err := downloader.RedditMedia(rawURL)
+		media, text, err := downloader.RedditMedia(rawURL)
 		if err != nil {
 			log.Printf("Reddit media resolution failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			failStatus()
 			return
 		}
+		caption := &captionOnce{html: mediaCaption(text)}
 		// Consecutive photos are collected and sent as albums, keeping post order.
 		var pendingPhotos []string
 		flushPhotos := func() bool {
-			err := sendPhotoURLs(bot, message, pendingPhotos)
+			if len(pendingPhotos) == 0 {
+				return true
+			}
+			err := sendPhotoURLs(bot, message, pendingPhotos, caption.take())
 			pendingPhotos = nil
 			if err != nil {
 				log.Printf("Reddit photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
@@ -245,7 +257,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 				failStatus()
 				return
 			}
-			err = sendLocalVideo(bot, message, filePath)
+			err = sendLocalVideo(bot, message, filePath, caption.take())
 			cleanup()
 			if err != nil {
 				log.Printf("Reddit video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
@@ -256,17 +268,17 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 		if !flushPhotos() {
 			return
 		}
-		log.Printf("Reddit media sent: count=%d chat_id=%d message_id=%d", len(media), message.Chat.ID, message.MessageID)
+		log.Printf("Reddit media sent: count=%d has_caption=%t chat_id=%d message_id=%d", len(media), text != "", message.Chat.ID, message.MessageID)
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "youtube-video":
-		filePath, cleanup, err := downloader.YouTubeVideo(rawURL)
+		filePath, title, cleanup, err := downloader.YouTubeVideo(rawURL)
 		if err != nil {
 			log.Printf("YouTube video download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			failStatus()
 			return
 		}
 		defer cleanup()
-		if err := sendLocalVideo(bot, message, filePath); err != nil {
+		if err := sendLocalVideo(bot, message, filePath, mediaCaption(title)); err != nil {
 			log.Printf("YouTube video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			failStatus()
 			return
@@ -275,10 +287,10 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "tiktok":
 		if !downloader.IsTikTokPhotoURL(rawURL) {
-			filePath, cleanup, err := downloader.TikTokVideo(rawURL)
+			filePath, description, cleanup, err := downloader.TikTokVideo(rawURL)
 			if err == nil {
 				defer cleanup()
-				if err := sendLocalVideo(bot, message, filePath); err != nil {
+				if err := sendLocalVideo(bot, message, filePath, mediaCaption(description)); err != nil {
 					log.Printf("TikTok video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 					failStatus()
 					return
@@ -291,14 +303,14 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			log.Printf("TikTok video download failed; trying photo post: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 		}
 
-		photos, cleanup, err := downloader.TikTokPhotos(rawURL)
+		photos, description, cleanup, err := downloader.TikTokPhotos(rawURL)
 		if err != nil {
 			log.Printf("TikTok download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			failStatus()
 			return
 		}
 		defer cleanup()
-		if err := sendMediaFiles(bot, message, photos, ""); err != nil {
+		if err := sendMediaFiles(bot, message, photos, mediaCaption(description)); err != nil {
 			log.Printf("TikTok photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			failStatus()
 			return
@@ -311,13 +323,9 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 	}
 }
 
-func sendLocalVideo(bot *tgbotapi.BotAPI, message *tgbotapi.Message, filePath string) error {
-	return sendLocalVideoWithCaption(bot, message, filePath, "")
-}
-
-// sendLocalVideoWithCaption sends a local video; captionHTML, if not empty, is
-// sent with HTML parse mode.
-func sendLocalVideoWithCaption(bot *tgbotapi.BotAPI, message *tgbotapi.Message, filePath, captionHTML string) error {
+// sendLocalVideo sends a local video; captionHTML, if not empty, is sent with
+// HTML parse mode.
+func sendLocalVideo(bot *tgbotapi.BotAPI, message *tgbotapi.Message, filePath, captionHTML string) error {
 	video := tgbotapi.NewVideo(message.Chat.ID, tgbotapi.FilePath(filePath))
 	if captionHTML != "" {
 		video.Caption = captionHTML
@@ -346,10 +354,9 @@ const telegramMediaGroupLimit = 10
 // UTF-16 code units, counted after HTML tags are removed.
 const telegramCaptionLimit = 1024
 
-// instagramCaption formats a post description as an HTML expandable quote for
-// a Telegram caption, trimming it to fit telegramCaptionLimit. It returns "" for
-// an empty description.
-func instagramCaption(description string) string {
+// mediaCaption formats post text as an HTML expandable quote for a Telegram
+// caption, trimming it to fit telegramCaptionLimit. It returns "" for empty text.
+func mediaCaption(description string) string {
 	description = strings.TrimSpace(description)
 	if description == "" {
 		return ""
@@ -387,13 +394,34 @@ func utf16RuneLen(r rune) int {
 	return 1
 }
 
+// captionOnce hands a caption to the first message sent for a post only, so
+// posts split into several messages show the text once, under the first.
+type captionOnce struct {
+	html string
+}
+
+func (c *captionOnce) take() string {
+	captionHTML := c.html
+	c.html = ""
+	return captionHTML
+}
+
 // sendPhotoURLs sends photos by URL in order, grouped into albums of up to
 // telegramMediaGroupLimit. A group with a single photo (an album needs at least
 // two) is sent as a regular photo message. An empty list sends nothing.
-func sendPhotoURLs(bot *tgbotapi.BotAPI, message *tgbotapi.Message, urls []string) error {
-	for _, group := range chunkSlice(urls, telegramMediaGroupLimit) {
+// captionHTML, if not empty, goes under the first message.
+func sendPhotoURLs(bot *tgbotapi.BotAPI, message *tgbotapi.Message, urls []string, captionHTML string) error {
+	for groupIndex, group := range chunkSlice(urls, telegramMediaGroupLimit) {
+		caption := ""
+		if groupIndex == 0 {
+			caption = captionHTML
+		}
 		if len(group) == 1 {
 			photo := tgbotapi.NewPhoto(message.Chat.ID, tgbotapi.FileURL(group[0]))
+			if caption != "" {
+				photo.Caption = caption
+				photo.ParseMode = tgbotapi.ModeHTML
+			}
 			photo.ReplyToMessageID = message.MessageID
 			photo.DisableNotification = true
 			if _, err := bot.Send(photo); err != nil {
@@ -403,8 +431,13 @@ func sendPhotoURLs(bot *tgbotapi.BotAPI, message *tgbotapi.Message, urls []strin
 		}
 
 		files := make([]interface{}, 0, len(group))
-		for _, photoURL := range group {
-			files = append(files, tgbotapi.NewInputMediaPhoto(tgbotapi.FileURL(photoURL)))
+		for i, photoURL := range group {
+			photo := tgbotapi.NewInputMediaPhoto(tgbotapi.FileURL(photoURL))
+			if i == 0 && caption != "" {
+				photo.Caption = caption
+				photo.ParseMode = tgbotapi.ModeHTML
+			}
+			files = append(files, photo)
 		}
 		album := tgbotapi.NewMediaGroup(message.Chat.ID, files)
 		album.ReplyToMessageID = message.MessageID
@@ -441,7 +474,7 @@ func sendMediaFiles(bot *tgbotapi.BotAPI, message *tgbotapi.Message, media []dow
 				}
 				continue
 			}
-			if err := sendLocalVideoWithCaption(bot, message, item.Path, caption); err != nil {
+			if err := sendLocalVideo(bot, message, item.Path, caption); err != nil {
 				return fmt.Errorf("send video: %w", err)
 			}
 			continue

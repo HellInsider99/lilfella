@@ -46,13 +46,15 @@ func validateRedditURL(rawURL string) error {
 	return nil
 }
 
-func RedditMedia(rawURL string) ([]RedditMediaItem, error) {
+// RedditMedia returns a Reddit post's media and its text: the title, followed
+// by the body if the post has one ("" if unavailable).
+func RedditMedia(rawURL string) ([]RedditMediaItem, string, error) {
 	if err := validateRedditURL(rawURL); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	cookiesArgs, cleanupCookies, err := ytDlpCookiesArgs()
 	if err != nil {
-		return nil, fmt.Errorf("configure yt-dlp cookies: %w", err)
+		return nil, "", fmt.Errorf("configure yt-dlp cookies: %w", err)
 	}
 	defer cleanupCookies()
 
@@ -61,9 +63,9 @@ func RedditMedia(rawURL string) ([]RedditMediaItem, error) {
 	output, err := exec.Command("yt-dlp", args...).CombinedOutput()
 	if err != nil {
 		if media, ok := redditImageFromUnsupportedURL(output); ok {
-			return []RedditMediaItem{media}, nil
+			return []RedditMediaItem{media}, "", nil
 		}
-		return nil, fmt.Errorf("inspect Reddit media with yt-dlp: %w: %s", err, output)
+		return nil, "", fmt.Errorf("inspect Reddit media with yt-dlp: %w: %s", err, output)
 	}
 
 	return parseRedditYTDlpMedia(output)
@@ -111,12 +113,14 @@ type redditYTDlpEntry struct {
 	RequestedFormats  []redditYTDlpEntry `json:"requested_formats"`
 	RequestedDownload []redditYTDlpEntry `json:"requested_downloads"`
 	Thumbnail         string             `json:"thumbnail"`
+	Title             string             `json:"title"`
+	Description       string             `json:"description"`
 }
 
-func parseRedditYTDlpMedia(output []byte) ([]RedditMediaItem, error) {
+func parseRedditYTDlpMedia(output []byte) ([]RedditMediaItem, string, error) {
 	var data redditYTDlpEntry
 	if err := json.Unmarshal(output, &data); err != nil {
-		return nil, fmt.Errorf("decode yt-dlp Reddit metadata: %w", err)
+		return nil, "", fmt.Errorf("decode yt-dlp Reddit metadata: %w", err)
 	}
 
 	items := make([]RedditMediaItem, 0, len(data.Entries)+1)
@@ -124,9 +128,24 @@ func parseRedditYTDlpMedia(output []byte) ([]RedditMediaItem, error) {
 	collectRedditYTDlpMedia(data, &items, seen)
 
 	if len(items) == 0 {
-		return nil, fmt.Errorf("Reddit media URL not found")
+		return nil, "", fmt.Errorf("Reddit media URL not found")
 	}
-	return items, nil
+	return items, redditPostText(data), nil
+}
+
+// redditPostText joins the post title and body, skipping empty parts and a
+// body that just repeats the title.
+func redditPostText(entry redditYTDlpEntry) string {
+	title := strings.TrimSpace(entry.Title)
+	body := strings.TrimSpace(entry.Description)
+	switch {
+	case body == "" || body == title:
+		return title
+	case title == "":
+		return body
+	default:
+		return title + "\n\n" + body
+	}
 }
 
 func collectRedditYTDlpMedia(entry redditYTDlpEntry, items *[]RedditMediaItem, seen map[string]bool) {

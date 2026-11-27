@@ -32,7 +32,7 @@ func TestValidateTikTokURL(t *testing.T) {
 }
 
 func TestTikTokVideoRejectsInvalidURL(t *testing.T) {
-	path, cleanup, err := TikTokVideo("https://example.com/video")
+	path, _, cleanup, err := TikTokVideo("https://example.com/video")
 	if err == nil {
 		cleanup()
 		t.Fatal("TikTokVideo() error = nil, want unsupported host error")

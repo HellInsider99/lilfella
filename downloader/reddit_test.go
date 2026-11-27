@@ -32,7 +32,7 @@ func TestParseRedditMediaGallery(t *testing.T) {
 		{"url":"https://preview.redd.it/one.jpg?width=1080&format=pjpg","ext":"jpg"},
 		{"url":"https://preview.redd.it/two.jpg?width=1080&format=pjpg","ext":"jpg"}
 	]}`)
-	items, err := parseRedditYTDlpMedia(output)
+	items, _, err := parseRedditYTDlpMedia(output)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestParseRedditMediaGallery(t *testing.T) {
 }
 
 func TestParseRedditMediaVideo(t *testing.T) {
-	items, err := parseRedditYTDlpMedia([]byte(`{"url":"https://v.redd.it/video/DASH_720.mp4","ext":"mp4","vcodec":"h264"}`))
+	items, _, err := parseRedditYTDlpMedia([]byte(`{"url":"https://v.redd.it/video/DASH_720.mp4","ext":"mp4","vcodec":"h264"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestParseRedditMediaVideoFormats(t *testing.T) {
 		{"url":"https://v.redd.it/video/audio","ext":"m4a","vcodec":"none","acodec":"aac"},
 		{"url":"https://v.redd.it/video/DASH_720.mp4","ext":"mp4","vcodec":"h264"}
 	]}`)
-	items, err := parseRedditYTDlpMedia(output)
+	items, _, err := parseRedditYTDlpMedia(output)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,5 +83,29 @@ func TestRedditImageFromUnsupportedURLRejectsUntrustedHosts(t *testing.T) {
 	output := []byte("ERROR: Unsupported URL: https://www.reddit.com/media?url=https%3A%2F%2Fevil.example%2Fimage.jpeg\n")
 	if _, ok := redditImageFromUnsupportedURL(output); ok {
 		t.Fatal("redditImageFromUnsupportedURL() accepted untrusted media host")
+	}
+}
+
+func TestParseRedditMediaText(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{name: "title only", output: `{"title":"Cool pic","url":"https://i.redd.it/a.jpg","ext":"jpg"}`, want: "Cool pic"},
+		{name: "title and body", output: `{"title":"Cool pic","description":"Taken today","url":"https://i.redd.it/a.jpg","ext":"jpg"}`, want: "Cool pic\n\nTaken today"},
+		{name: "body repeats title", output: `{"title":"Same","description":"Same","url":"https://i.redd.it/a.jpg","ext":"jpg"}`, want: "Same"},
+		{name: "no text", output: `{"url":"https://i.redd.it/a.jpg","ext":"jpg"}`, want: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, text, err := parseRedditYTDlpMedia([]byte(test.output))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if text != test.want {
+				t.Errorf("text = %q, want %q", text, test.want)
+			}
+		})
 	}
 }

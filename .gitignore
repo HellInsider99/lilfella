@@ -2,6 +2,7 @@
 .env
 reddit-cookies.txt
 instagram-cookies.txt
+un-vanya-list.json
 .DS_Store
 **/.DS_Store
 /logs/

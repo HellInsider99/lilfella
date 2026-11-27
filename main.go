@@ -50,6 +50,13 @@ func main() {
 		NewAppleMusicPlatform(),
 	}
 
+	// A broken list only affects status messages, so log it and keep running.
+	statusChats, statusChatsPath, err := loadStatusChatList()
+	if err != nil {
+		log.Printf("un-vanya-list ignored, no chat will get status messages: %v", err)
+	}
+	log.Printf("un-vanya-list loaded: path=%s chats=%d", statusChatsPath, len(statusChats))
+
 	log.Printf("Bot started as @%s", bot.Self.UserName)
 
 	updates := bot.GetUpdatesChan(tgbotapi.UpdateConfig{Offset: 0, Timeout: 60})
@@ -69,9 +76,9 @@ func main() {
 		if mediaURL, mediaType, ok := findDownloadableMediaInMessage(update.Message); ok {
 			log.Printf("downloadable media detected: type=%s chat_id=%d message_id=%d", mediaType, update.Message.Chat.ID, update.Message.MessageID)
 			if update.Message.Chat.IsPrivate() {
-				handleDownloadableMedia(bot, update.Message, mediaURL, mediaType)
+				handleDownloadableMedia(bot, update.Message, mediaURL, mediaType, statusChats.Contains(update.Message.Chat.ID))
 			} else if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
-				go handleDownloadableMedia(bot, update.Message, mediaURL, mediaType)
+				go handleDownloadableMedia(bot, update.Message, mediaURL, mediaType, statusChats.Contains(update.Message.Chat.ID))
 			}
 			continue
 		}
@@ -132,20 +139,30 @@ func findDownloadableMediaInMessage(message *tgbotapi.Message) (string, string, 
 	return "", "", false
 }
 
-func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, rawURL, mediaType string) {
-	log.Printf("media download started: type=%s chat_id=%d message_id=%d", mediaType, message.Chat.ID, message.MessageID)
-	status := tgbotapi.NewMessage(message.Chat.ID, "⏳ Посилання отримано. Починаю завантаження медіа...")
-	status.DisableNotification = true
-	if message.Chat.Type == "group" || message.Chat.Type == "supergroup" {
-		status.ReplyToMessageID = message.MessageID
-	}
-	statusMessage, err := bot.Send(status)
-	if err != nil {
-		log.Printf("failed to send media status: type=%s chat_id=%d message_id=%d: %v", mediaType, message.Chat.ID, message.MessageID, err)
-		return
+// handleDownloadableMedia downloads and sends the media behind rawURL. When
+// showStatus is true (the chat is in the un-vanya-list), it first posts a
+// "downloading" message, deletes it on success and turns it into an error
+// message on failure. Otherwise it sends only the media and fails silently.
+func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, rawURL, mediaType string, showStatus bool) {
+	log.Printf("media download started: type=%s show_status=%t chat_id=%d message_id=%d", mediaType, showStatus, message.Chat.ID, message.MessageID)
+	// statusMessageID stays 0 without a status message; editStatus and
+	// deleteMessage do nothing for 0.
+	var statusMessageID int
+	if showStatus {
+		status := tgbotapi.NewMessage(message.Chat.ID, "⏳ Посилання отримано. Починаю завантаження медіа...")
+		status.DisableNotification = true
+		if message.Chat.Type == "group" || message.Chat.Type == "supergroup" {
+			status.ReplyToMessageID = message.MessageID
+		}
+		statusMessage, err := bot.Send(status)
+		if err != nil {
+			log.Printf("failed to send media status: type=%s chat_id=%d message_id=%d: %v", mediaType, message.Chat.ID, message.MessageID, err)
+			return
+		}
+		statusMessageID = statusMessage.MessageID
 	}
 	failStatus := func() {
-		editStatus(bot, message.Chat.ID, statusMessage.MessageID, "❌ Не вдалося завантажити або надіслати медіа 😕")
+		editStatus(bot, message.Chat.ID, statusMessageID, "❌ Не вдалося завантажити або надіслати медіа 😕")
 	}
 
 	switch mediaType {
@@ -203,7 +220,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			return
 		}
 		log.Printf("Twitter media sent: count=%d has_caption=%t chat_id=%d message_id=%d", len(media), text != "", message.Chat.ID, message.MessageID)
-		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessageID)
 	case "instagram":
 		post, cleanup, err := downloader.InstagramMedia(rawURL)
 		if err != nil {
@@ -218,7 +235,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			return
 		}
 		log.Printf("Instagram media sent: count=%d has_caption=%t chat_id=%d message_id=%d", len(post.Items), post.Description != "", message.Chat.ID, message.MessageID)
-		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessageID)
 	case "reddit":
 		media, text, err := downloader.RedditMedia(rawURL)
 		if err != nil {
@@ -269,7 +286,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			return
 		}
 		log.Printf("Reddit media sent: count=%d has_caption=%t chat_id=%d message_id=%d", len(media), text != "", message.Chat.ID, message.MessageID)
-		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessageID)
 	case "youtube-video":
 		filePath, title, cleanup, err := downloader.YouTubeVideo(rawURL)
 		if err != nil {
@@ -284,7 +301,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			return
 		}
 		log.Printf("YouTube video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
-		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessageID)
 	case "tiktok":
 		if !downloader.IsTikTokPhotoURL(rawURL) {
 			filePath, description, cleanup, err := downloader.TikTokVideo(rawURL)
@@ -296,7 +313,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 					return
 				}
 				log.Printf("TikTok video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
-				deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
+				deleteMessage(bot, message.Chat.ID, statusMessageID)
 				return
 			}
 			// Short links can lead to photo posts, which yt-dlp can't download.
@@ -316,7 +333,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			return
 		}
 		log.Printf("TikTok photos sent: count=%d chat_id=%d message_id=%d", len(photos), message.Chat.ID, message.MessageID)
-		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
+		deleteMessage(bot, message.Chat.ID, statusMessageID)
 	default:
 		log.Printf("unsupported media type: type=%q chat_id=%d message_id=%d", mediaType, message.Chat.ID, message.MessageID)
 		failStatus()

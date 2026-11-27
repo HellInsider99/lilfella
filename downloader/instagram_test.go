@@ -70,3 +70,42 @@ func TestFindFileWithExtensionReturnsErrorWhenMissing(t *testing.T) {
 		t.Fatal("findFileWithExtension() error = nil, want missing-file error")
 	}
 }
+
+func TestCollectInstagramMediaOrdersAndClassifies(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"003.webp", "001.jpg", "002.mp4", "004.part", "notes.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := collectInstagramMedia(dir)
+	if err != nil {
+		t.Fatalf("collectInstagramMedia() error = %v", err)
+	}
+	want := []InstagramMediaItem{
+		{Path: filepath.Join(dir, "001.jpg"), Type: "image"},
+		{Path: filepath.Join(dir, "002.mp4"), Type: "video"},
+		{Path: filepath.Join(dir, "003.webp"), Type: "image"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("collectInstagramMedia() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("item %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestCollectInstagramMediaReturnsErrorWhenEmpty(t *testing.T) {
+	if _, err := collectInstagramMedia(t.TempDir()); err == nil {
+		t.Fatal("collectInstagramMedia() error = nil, want no-media error")
+	}
+}
+
+func TestInstagramMediaRejectsURLWithoutShortcode(t *testing.T) {
+	if _, _, err := InstagramMedia("https://www.instagram.com/accounts/login/"); err == nil {
+		t.Fatal("InstagramMedia() error = nil, want missing-shortcode error")
+	}
+}

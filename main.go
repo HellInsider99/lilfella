@@ -185,19 +185,32 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 		log.Printf("Twitter media sent: count=%d chat_id=%d message_id=%d", len(media), message.Chat.ID, message.MessageID)
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "instagram":
-		filePath, cleanup, err := downloader.InstagramReel(rawURL)
+		media, cleanup, err := downloader.InstagramMedia(rawURL)
 		if err != nil {
 			log.Printf("Instagram download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			failStatus()
 			return
 		}
 		defer cleanup()
-		if err := sendLocalVideo(bot, message, filePath); err != nil {
-			log.Printf("Instagram video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
-			failStatus()
-			return
+		for _, item := range media {
+			if item.Type == "image" {
+				photo := tgbotapi.NewPhoto(message.Chat.ID, tgbotapi.FilePath(item.Path))
+				photo.ReplyToMessageID = message.MessageID
+				photo.DisableNotification = true
+				if _, err := bot.Send(photo); err != nil {
+					log.Printf("Instagram photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+					failStatus()
+					return
+				}
+				continue
+			}
+			if err := sendLocalVideo(bot, message, item.Path); err != nil {
+				log.Printf("Instagram video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+				failStatus()
+				return
+			}
 		}
-		log.Printf("Instagram video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
+		log.Printf("Instagram media sent: count=%d chat_id=%d message_id=%d", len(media), message.Chat.ID, message.MessageID)
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "reddit":
 		media, err := downloader.RedditMedia(rawURL)

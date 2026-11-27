@@ -12,7 +12,7 @@ FROM python:3.13-alpine
 
 RUN apk add --no-cache ca-certificates ffmpeg \
     && python -m venv /opt/yt-dlp \
-    && /opt/yt-dlp/bin/pip install --no-cache-dir yt-dlp \
+    && /opt/yt-dlp/bin/pip install --no-cache-dir yt-dlp gallery-dl \
     && addgroup -S app \
     && adduser -S -G app app \
     && mkdir -p /app/logs \

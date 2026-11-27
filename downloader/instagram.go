@@ -13,15 +13,10 @@ import (
 
 var instagramPostPathPattern = regexp.MustCompile(`^/(?:reels?|p)/([A-Za-z0-9_-]+)/?$`)
 
-type InstagramMediaItem struct {
-	Path string
-	Type string // "image" or "video"
-}
-
 // InstagramPost is the downloaded media of a post in post order, plus the
 // post's caption (empty if it has none or it could not be read).
 type InstagramPost struct {
-	Items       []InstagramMediaItem
+	Items       []MediaFile
 	Description string
 }
 
@@ -43,7 +38,7 @@ func InstagramMedia(rawURL string) (InstagramPost, func(), error) {
 		return InstagramPost{}, func() {}, fmt.Errorf("gallery-dl: %v; yt-dlp fallback: %w", galleryErr, ytErr)
 	}
 	return InstagramPost{
-		Items:       []InstagramMediaItem{{Path: videoPath, Type: "video"}},
+		Items:       []MediaFile{{Path: videoPath, Type: "video"}},
 		Description: description,
 	}, videoCleanup, nil
 }
@@ -55,29 +50,19 @@ func instagramGalleryDLMedia(rawURL string) (InstagramPost, func(), error) {
 	}
 	defer cleanupCookies()
 
-	tempDir, err := os.MkdirTemp("", "lilfella-instagram-")
+	// --write-metadata saves a "<file>.json" next to each file; it holds the caption.
+	tempDir, cleanupDir, err := runGalleryDL(rawURL, cookiesArgs, "--write-metadata")
 	if err != nil {
-		return InstagramPost{}, func() {}, fmt.Errorf("create Instagram temp directory: %w", err)
+		return InstagramPost{}, func() {}, fmt.Errorf("Instagram post: %w", err)
 	}
-	cleanups := []func(){func() { _ = os.RemoveAll(tempDir) }}
+	cleanups := []func(){cleanupDir}
 	cleanup := func() {
 		for i := len(cleanups) - 1; i >= 0; i-- {
 			cleanups[i]()
 		}
 	}
 
-	// cookiesArgs is either empty or {"--cookies", path}; gallery-dl uses the same flag.
-	// --write-metadata saves a "<file>.json" next to each file; it holds the caption.
-	args := []string{"--directory", tempDir, "--filename", "{num:>03}.{extension}", "--write-metadata"}
-	args = append(args, cookiesArgs...)
-	args = append(args, rawURL)
-	command := exec.Command("gallery-dl", args...)
-	if output, err := command.CombinedOutput(); err != nil {
-		cleanup()
-		return InstagramPost{}, func() {}, fmt.Errorf("run gallery-dl for Instagram post: %w: %s", err, output)
-	}
-
-	items, err := collectInstagramMedia(tempDir)
+	items, err := collectMediaFiles(tempDir)
 	if err != nil {
 		cleanup()
 		return InstagramPost{}, func() {}, err
@@ -126,36 +111,6 @@ func readInstagramDescription(dir string) string {
 		}
 	}
 	return ""
-}
-
-// collectInstagramMedia returns downloaded media files in dir, sorted by name
-// (gallery-dl numbers them in carousel order), classified as image or video.
-func collectInstagramMedia(dir string) ([]InstagramMediaItem, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("scan downloaded media: %w", err)
-	}
-
-	var items []InstagramMediaItem
-	for _, entry := range entries { // os.ReadDir returns entries sorted by name
-		if !entry.Type().IsRegular() {
-			continue
-		}
-		var mediaType string
-		switch strings.ToLower(filepath.Ext(entry.Name())) {
-		case ".jpg", ".jpeg", ".png", ".webp", ".heic":
-			mediaType = "image"
-		case ".mp4", ".mov":
-			mediaType = "video"
-		default:
-			continue
-		}
-		items = append(items, InstagramMediaItem{Path: filepath.Join(dir, entry.Name()), Type: mediaType})
-	}
-	if len(items) == 0 {
-		return nil, fmt.Errorf("no downloaded Instagram media found")
-	}
-	return items, nil
 }
 
 func InstagramReel(rawURL string) (string, func(), error) {

@@ -79,17 +79,17 @@ func TestCollectInstagramMediaOrdersAndClassifies(t *testing.T) {
 		}
 	}
 
-	got, err := collectInstagramMedia(dir)
+	got, err := collectMediaFiles(dir)
 	if err != nil {
-		t.Fatalf("collectInstagramMedia() error = %v", err)
+		t.Fatalf("collectMediaFiles() error = %v", err)
 	}
-	want := []InstagramMediaItem{
+	want := []MediaFile{
 		{Path: filepath.Join(dir, "001.jpg"), Type: "image"},
 		{Path: filepath.Join(dir, "002.mp4"), Type: "video"},
 		{Path: filepath.Join(dir, "003.webp"), Type: "image"},
 	}
 	if len(got) != len(want) {
-		t.Fatalf("collectInstagramMedia() = %v, want %v", got, want)
+		t.Fatalf("collectMediaFiles() = %v, want %v", got, want)
 	}
 	for i := range want {
 		if got[i] != want[i] {
@@ -99,8 +99,8 @@ func TestCollectInstagramMediaOrdersAndClassifies(t *testing.T) {
 }
 
 func TestCollectInstagramMediaReturnsErrorWhenEmpty(t *testing.T) {
-	if _, err := collectInstagramMedia(t.TempDir()); err == nil {
-		t.Fatal("collectInstagramMedia() error = nil, want no-media error")
+	if _, err := collectMediaFiles(t.TempDir()); err == nil {
+		t.Fatal("collectMediaFiles() error = nil, want no-media error")
 	}
 }
 

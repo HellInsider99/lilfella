@@ -61,6 +61,13 @@ func TestFindDownloadableMediaInstagram(t *testing.T) {
 			wantFound: true,
 		},
 		{
+			name:      "TikTok photo post URL",
+			text:      "https://www.tiktok.com/@user/photo/1234567890",
+			wantURL:   "https://www.tiktok.com/@user/photo/1234567890",
+			wantType:  "tiktok",
+			wantFound: true,
+		},
+		{
 			name:      "post URL with trailing punctuation",
 			text:      "https://www.instagram.com/p/ABC123/.",
 			wantURL:   "https://www.instagram.com/p/ABC123/",
@@ -98,13 +105,13 @@ func TestFindDownloadableMediaInMessageTextLink(t *testing.T) {
 	}
 }
 
-func TestChunkInstagramMedia(t *testing.T) {
-	media := make([]downloader.InstagramMediaItem, 23)
+func TestChunkSlice(t *testing.T) {
+	media := make([]downloader.MediaFile, 23)
 	for i := range media {
-		media[i] = downloader.InstagramMediaItem{Path: fmt.Sprintf("%03d.jpg", i+1), Type: "image"}
+		media[i] = downloader.MediaFile{Path: fmt.Sprintf("%03d.jpg", i+1), Type: "image"}
 	}
 
-	groups := chunkInstagramMedia(media, telegramMediaGroupLimit)
+	groups := chunkSlice(media, telegramMediaGroupLimit)
 	wantSizes := []int{10, 10, 3}
 	if len(groups) != len(wantSizes) {
 		t.Fatalf("got %d groups, want %d", len(groups), len(wantSizes))
@@ -122,8 +129,8 @@ func TestChunkInstagramMedia(t *testing.T) {
 		}
 	}
 
-	if got := chunkInstagramMedia(nil, telegramMediaGroupLimit); len(got) != 0 {
-		t.Errorf("chunkInstagramMedia(nil) = %v, want no groups", got)
+	if got := chunkSlice(nil, telegramMediaGroupLimit); len(got) != 0 {
+		t.Errorf("chunkSlice(nil) = %v, want no groups", got)
 	}
 }
 

@@ -19,7 +19,7 @@ var (
 	instagramURLPattern = regexp.MustCompile(`https?://(?:(?:www|m)\.)?instagram\.com/(?:reels?|p)/[^\s]+`)
 	redditURLPattern    = regexp.MustCompile(`https?://(?:(?:www|old|new)\.)?reddit\.com/(?:r/[^/\s]+/(?:comments|s|gallery)/[^\s]+)[^\s]*|https?://redd\.it/[A-Za-z0-9]+[^\s]*`)
 	shortsURLPattern    = regexp.MustCompile(`https?://(?:www\.)?(?:youtube\.com/shorts|music\.youtube\.com/shorts)/[^\s?]+`)
-	tiktokURLPattern    = regexp.MustCompile(`https?://(?:(?:www|m)\.)?tiktok\.com/(?:@[^/\s]+/video/\d+|t/[^/\s]+)[^\s]*|https?://(?:vm|vt)\.tiktok\.com/[^\s]+`)
+	tiktokURLPattern    = regexp.MustCompile(`https?://(?:(?:www|m)\.)?tiktok\.com/(?:@[^/\s]+/(?:video|photo)/\d+|t/[^/\s]+)[^\s]*|https?://(?:vm|vt)\.tiktok\.com/[^\s]+`)
 )
 
 func main() {
@@ -156,18 +156,26 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			failStatus()
 			return
 		}
+		// Consecutive photos are collected and sent as albums, keeping post order.
+		var pendingPhotos []string
+		flushPhotos := func() bool {
+			err := sendPhotoURLs(bot, message, pendingPhotos)
+			pendingPhotos = nil
+			if err != nil {
+				log.Printf("Twitter photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+				failStatus()
+				return false
+			}
+			return true
+		}
 		for _, item := range media {
 			switch item.Type {
 			case "image":
-				photo := tgbotapi.NewPhoto(message.Chat.ID, tgbotapi.FileURL(item.URL))
-				photo.ReplyToMessageID = message.MessageID
-				photo.DisableNotification = true
-				if _, err := bot.Send(photo); err != nil {
-					log.Printf("Twitter photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
-					failStatus()
+				pendingPhotos = append(pendingPhotos, item.URL)
+			case "video", "animated_gif":
+				if !flushPhotos() {
 					return
 				}
-			case "video", "animated_gif":
 				video := tgbotapi.NewVideo(message.Chat.ID, tgbotapi.FileURL(item.URL))
 				video.ReplyToMessageID = message.MessageID
 				video.DisableNotification = true
@@ -183,6 +191,9 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 				return
 			}
 		}
+		if !flushPhotos() {
+			return
+		}
 		log.Printf("Twitter media sent: count=%d chat_id=%d message_id=%d", len(media), message.Chat.ID, message.MessageID)
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "instagram":
@@ -193,7 +204,7 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			return
 		}
 		defer cleanup()
-		if err := sendInstagramMedia(bot, message, post.Items, instagramCaption(post.Description)); err != nil {
+		if err := sendMediaFiles(bot, message, post.Items, instagramCaption(post.Description)); err != nil {
 			log.Printf("Instagram media send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			failStatus()
 			return
@@ -207,17 +218,25 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 			failStatus()
 			return
 		}
+		// Consecutive photos are collected and sent as albums, keeping post order.
+		var pendingPhotos []string
+		flushPhotos := func() bool {
+			err := sendPhotoURLs(bot, message, pendingPhotos)
+			pendingPhotos = nil
+			if err != nil {
+				log.Printf("Reddit photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+				failStatus()
+				return false
+			}
+			return true
+		}
 		for _, item := range media {
 			if item.Type == "image" {
-				photo := tgbotapi.NewPhoto(message.Chat.ID, tgbotapi.FileURL(item.URL))
-				photo.ReplyToMessageID = message.MessageID
-				photo.DisableNotification = true
-				if _, err := bot.Send(photo); err != nil {
-					log.Printf("Reddit photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
-					failStatus()
-					return
-				}
+				pendingPhotos = append(pendingPhotos, item.URL)
 				continue
+			}
+			if !flushPhotos() {
+				return
 			}
 
 			filePath, cleanup, err := downloader.RedditVideo(rawURL)
@@ -233,6 +252,9 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 				failStatus()
 				return
 			}
+		}
+		if !flushPhotos() {
+			return
 		}
 		log.Printf("Reddit media sent: count=%d chat_id=%d message_id=%d", len(media), message.Chat.ID, message.MessageID)
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
@@ -252,19 +274,36 @@ func handleDownloadableMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, ra
 		log.Printf("YouTube video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	case "tiktok":
-		filePath, cleanup, err := downloader.TikTokVideo(rawURL)
+		if !downloader.IsTikTokPhotoURL(rawURL) {
+			filePath, cleanup, err := downloader.TikTokVideo(rawURL)
+			if err == nil {
+				defer cleanup()
+				if err := sendLocalVideo(bot, message, filePath); err != nil {
+					log.Printf("TikTok video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+					failStatus()
+					return
+				}
+				log.Printf("TikTok video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
+				deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
+				return
+			}
+			// Short links can lead to photo posts, which yt-dlp can't download.
+			log.Printf("TikTok video download failed; trying photo post: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+		}
+
+		photos, cleanup, err := downloader.TikTokPhotos(rawURL)
 		if err != nil {
-			log.Printf("TikTok video download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+			log.Printf("TikTok download failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			failStatus()
 			return
 		}
 		defer cleanup()
-		if err := sendLocalVideo(bot, message, filePath); err != nil {
-			log.Printf("TikTok video send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
+		if err := sendMediaFiles(bot, message, photos, ""); err != nil {
+			log.Printf("TikTok photo send failed: chat_id=%d message_id=%d: %v", message.Chat.ID, message.MessageID, err)
 			failStatus()
 			return
 		}
-		log.Printf("TikTok video sent: chat_id=%d message_id=%d", message.Chat.ID, message.MessageID)
+		log.Printf("TikTok photos sent: count=%d chat_id=%d message_id=%d", len(photos), message.Chat.ID, message.MessageID)
 		deleteMessage(bot, message.Chat.ID, statusMessage.MessageID)
 	default:
 		log.Printf("unsupported media type: type=%q chat_id=%d message_id=%d", mediaType, message.Chat.ID, message.MessageID)
@@ -348,12 +387,41 @@ func utf16RuneLen(r rune) int {
 	return 1
 }
 
-// sendInstagramMedia sends post media in post order, grouped into albums of up
+// sendPhotoURLs sends photos by URL in order, grouped into albums of up to
+// telegramMediaGroupLimit. A group with a single photo (an album needs at least
+// two) is sent as a regular photo message. An empty list sends nothing.
+func sendPhotoURLs(bot *tgbotapi.BotAPI, message *tgbotapi.Message, urls []string) error {
+	for _, group := range chunkSlice(urls, telegramMediaGroupLimit) {
+		if len(group) == 1 {
+			photo := tgbotapi.NewPhoto(message.Chat.ID, tgbotapi.FileURL(group[0]))
+			photo.ReplyToMessageID = message.MessageID
+			photo.DisableNotification = true
+			if _, err := bot.Send(photo); err != nil {
+				return fmt.Errorf("send photo: %w", err)
+			}
+			continue
+		}
+
+		files := make([]interface{}, 0, len(group))
+		for _, photoURL := range group {
+			files = append(files, tgbotapi.NewInputMediaPhoto(tgbotapi.FileURL(photoURL)))
+		}
+		album := tgbotapi.NewMediaGroup(message.Chat.ID, files)
+		album.ReplyToMessageID = message.MessageID
+		album.DisableNotification = true
+		if _, err := bot.SendMediaGroup(album); err != nil {
+			return fmt.Errorf("send album of %d photos: %w", len(group), err)
+		}
+	}
+	return nil
+}
+
+// sendMediaFiles sends downloaded media in post order, grouped into albums of up
 // to telegramMediaGroupLimit items. A group with a single item (an album needs
 // at least two) is sent as a regular photo or video message. captionHTML, if
 // not empty, is attached to the first item, so it shows under the first message.
-func sendInstagramMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, media []downloader.InstagramMediaItem, captionHTML string) error {
-	for groupIndex, group := range chunkInstagramMedia(media, telegramMediaGroupLimit) {
+func sendMediaFiles(bot *tgbotapi.BotAPI, message *tgbotapi.Message, media []downloader.MediaFile, captionHTML string) error {
+	for groupIndex, group := range chunkSlice(media, telegramMediaGroupLimit) {
 		caption := ""
 		if groupIndex == 0 {
 			caption = captionHTML
@@ -379,16 +447,16 @@ func sendInstagramMedia(bot *tgbotapi.BotAPI, message *tgbotapi.Message, media [
 			continue
 		}
 
-		if err := sendInstagramAlbum(bot, message, group, caption); err != nil {
+		if err := sendMediaFileAlbum(bot, message, group, caption); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// sendInstagramAlbum sends group as one album. captionHTML, if not empty, goes
+// sendMediaFileAlbum sends group as one album. captionHTML, if not empty, goes
 // on the first item; Telegram shows it under the album.
-func sendInstagramAlbum(bot *tgbotapi.BotAPI, message *tgbotapi.Message, group []downloader.InstagramMediaItem, captionHTML string) error {
+func sendMediaFileAlbum(bot *tgbotapi.BotAPI, message *tgbotapi.Message, group []downloader.MediaFile, captionHTML string) error {
 	files := make([]interface{}, 0, len(group))
 	for i, item := range group {
 		caption, parseMode := "", ""
@@ -427,13 +495,13 @@ func sendInstagramAlbum(bot *tgbotapi.BotAPI, message *tgbotapi.Message, group [
 	return nil
 }
 
-// chunkInstagramMedia splits media into consecutive groups of at most size
-// items, preserving order.
-func chunkInstagramMedia(media []downloader.InstagramMediaItem, size int) [][]downloader.InstagramMediaItem {
-	var groups [][]downloader.InstagramMediaItem
-	for start := 0; start < len(media); start += size {
-		end := min(start+size, len(media))
-		groups = append(groups, media[start:end])
+// chunkSlice splits items into consecutive groups of at most size items,
+// preserving order.
+func chunkSlice[T any](items []T, size int) [][]T {
+	var groups [][]T
+	for start := 0; start < len(items); start += size {
+		end := min(start+size, len(items))
+		groups = append(groups, items[start:end])
 	}
 	return groups
 }
